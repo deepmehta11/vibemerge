@@ -192,16 +192,15 @@ test("controller independently reloads state and mints write permission only for
   }
 });
 
-test("GitHub API strategy publishes evidence then merges only the exact verified head", async () => {
+test("GitHub API strategy needs no branch protection while preserving exact live Check Run gates", async () => {
   const tokens = new RecordingTokens();
   const requiredEvidenceCheck = { name: "MergeProof / evidence", appId: 777 };
-  const protectedChecks = [
+  const sourcePinnedChecks = [
     { name: "ci / test", status: "pass" as const, appId: 41 },
     { name: "ci / security", status: "pass" as const, appId: 42 },
   ];
   const mergeGateway = new MemoryMergeGateway(live({
-    baseRef: "main",
-    checks: [...protectedChecks, { ...requiredEvidenceCheck, status: "pass" as const }],
+    checks: [...sourcePinnedChecks, { ...requiredEvidenceCheck, status: "pass" as const }],
   }));
   const checkWrites: string[] = [];
   const ledger = new RunLedger();
@@ -221,11 +220,9 @@ test("GitHub API strategy publishes evidence then merges only the exact verified
       tokens,
       {
         createReadGateway: () => ({
-          getPullRequest: async () => live({ baseRef: "main", checks: protectedChecks }),
-          getRequiredStatusChecks: async () => [
-            { name: "ci / test", appId: 41 },
-            { name: "ci / security", appId: 42 },
-          ],
+          // Direct API mode validates the App IDs on live PR Check Runs and
+          // must not depend on branch protection or the Administration API.
+          getPullRequest: async () => live({ checks: sourcePinnedChecks }),
         }),
         createMergeGateway: () => mergeGateway,
         createCheckRunGateway: () => ({
@@ -247,8 +244,8 @@ test("GitHub API strategy publishes evidence then merges only the exact verified
     assert.equal(mergeGateway.mergeCalls, 1);
     assert.deepEqual(checkWrites, ["created", "completed"]);
     assert.deepEqual(tokens.requests.map((request) => request.permissions), [
-      { contents: "read", pull_requests: "read", checks: "read", administration: "read" },
-      { contents: "read", pull_requests: "read", checks: "read", administration: "read" },
+      { contents: "read", pull_requests: "read", checks: "read" },
+      { contents: "read", pull_requests: "read", checks: "read" },
       { checks: "write" },
       { contents: "write", pull_requests: "read", checks: "read" },
     ]);

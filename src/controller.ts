@@ -33,7 +33,7 @@ export interface GitHubGatewayFactory {
   createReadGateway(token: string): Pick<MergeGateway, "getPullRequest"> & {
     /** Optional only for fixture adapters; required by Issue-to-Proof policy at runtime. */
     getIssue?: (repository: string, issueNumber: number) => Promise<CanonicalGitHubIssue>;
-    /** Required before production automation can trust branch-protected CI. */
+    /** Required only by merge-queue mode to verify branch-protected CI. */
     getRequiredStatusChecks?: (
       repository: string,
       branch: string,
@@ -57,7 +57,7 @@ export interface MergeProofControllerPolicy {
   merge: MergePolicy;
   /** Injected from mounted trusted artifacts at production runtime startup. */
   trustedArtifactDigest?: string;
-  /** Runtime-owned requirement for the final merge_group evidence Check Run. */
+  /** Runtime-owned identity for VibeMerge's evidence Check Run. */
   requiredEvidenceCheck?: { name: string; appId: number };
 }
 
@@ -78,12 +78,17 @@ const verificationPermissions = {
 } as const;
 
 function verificationReadPermissions(
-  policy: Pick<MergeProofControllerPolicy, "verification" | "requiredEvidenceCheck">,
+  policy: Pick<
+    MergeProofControllerPolicy,
+    "verification" | "mergeStrategy" | "requiredEvidenceCheck"
+  >,
 ): Record<string, GitHubPermission> {
   return {
     ...verificationPermissions,
     ...(policy.verification.issueToProof?.requireLinkedIssue ? { issues: "read" as const } : {}),
-    ...(policy.requiredEvidenceCheck ? { administration: "read" as const } : {}),
+    ...(policy.mergeStrategy === "merge_queue" && policy.requiredEvidenceCheck
+      ? { administration: "read" as const }
+      : {}),
   };
 }
 
@@ -192,10 +197,9 @@ function isReusableReconciledPrHeadCheck(
 }
 
 /**
- * A controller-side CI policy is not enough for production automation: every
- * required Check Run must also be present in GitHub branch protection and
- * pinned to the App that produced it. Otherwise a later queue revision could
- * merge after a same-named or unrequired CI check changes.
+ * Queue mode requires every controller-side Check Run gate to also be present
+ * in source-pinned branch protection. GitHub API mode instead revalidates the
+ * exact source App directly from live PR Check Runs before its SHA-pinned merge.
  */
 export function sourcePinnedBranchProtectionFailure(
   policy: Pick<MergeProofControllerPolicy, "merge" | "requiredEvidenceCheck">,
@@ -624,11 +628,13 @@ export class MergeProofController {
             trigger.pullRequest,
           );
           eligibilityReason = preflight(revision, receipt, this.policy.merge, finalLive) ?? undefined;
-          if (!eligibilityReason && this.policy.requiredEvidenceCheck) {
+          if (
+            !eligibilityReason &&
+            this.policy.mergeStrategy === "merge_queue" &&
+            this.policy.requiredEvidenceCheck
+          ) {
             if (!finalLive.baseRef || !finalReadGateway.getRequiredStatusChecks) {
-              eligibilityReason = this.policy.mergeStrategy === "merge_queue"
-                ? "Cannot verify that GitHub requires the final MergeProof merge-group Check Run."
-                : "Cannot verify that GitHub requires VibeMerge's source-pinned CI checks.";
+              eligibilityReason = "Cannot verify that GitHub requires the final MergeProof merge-group Check Run.";
             } else {
               const requiredChecks = await finalReadGateway.getRequiredStatusChecks(
                 trigger.repository,
@@ -637,7 +643,7 @@ export class MergeProofController {
               eligibilityReason = sourcePinnedBranchProtectionFailure(
                 this.policy,
                 requiredChecks,
-                { includeEvidenceCheck: this.policy.mergeStrategy === "merge_queue" },
+                { includeEvidenceCheck: true },
               );
             }
           }
