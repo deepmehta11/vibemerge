@@ -1,6 +1,11 @@
 import { createRuntime } from "./runtime.js";
 import { ReconciliationWorkerPool } from "./reconciliation-pool.js";
 import { WebhookWorkerPool, workerConcurrency } from "./worker-pool.js";
+import { redactSensitiveText } from "./agent-planner.js";
+
+function safeWorkerDetail(detail: string | undefined): string | null {
+  return detail ? redactSensitiveText(detail).replace(/\s+/g, " ").slice(0, 1_000) : null;
+}
 
 const runtime = createRuntime();
 const concurrency = workerConcurrency(process.env.MERGEPROOF_WORKER_CONCURRENCY);
@@ -14,6 +19,7 @@ const pool = new WebhookWorkerPool(
         event: "webhook_processed",
         deliveryId: outcome.deliveryId ?? null,
         state: outcome.state,
+        detail: safeWorkerDetail(outcome.detail),
       }),
     ),
   (error) => console.error("[mergeproof] worker failure", error instanceof Error ? error.message : error),
