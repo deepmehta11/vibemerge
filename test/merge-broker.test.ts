@@ -131,6 +131,38 @@ test("a same-named check from the wrong GitHub App cannot satisfy a source-pinne
   }
 });
 
+test("GitHub API preflight requires VibeMerge's own successful evidence check", async () => {
+  const run = await verifiedRun();
+  try {
+    const requiredEvidenceCheck = { name: "MergeProof / evidence", appId: 777 };
+    const missing = preflight(
+      run.revision,
+      run.receipt,
+      demoMergePolicy,
+      live(run.revision),
+      requiredEvidenceCheck,
+    );
+    assert.match(missing ?? "", /evidence check is pending/i);
+
+    const wrongSource = preflight(
+      run.revision,
+      run.receipt,
+      demoMergePolicy,
+      {
+        ...live(run.revision),
+        checks: [
+          ...live(run.revision).checks,
+          { name: requiredEvidenceCheck.name, status: "pass", appId: 12 },
+        ],
+      },
+      requiredEvidenceCheck,
+    );
+    assert.match(wrongSource ?? "", /App 777/i);
+  } finally {
+    run.ledger.close();
+  }
+});
+
 test("an ambiguous merge request is never retried automatically", async () => {
   const run = await verifiedRun();
   try {

@@ -232,7 +232,7 @@ export interface ReconciliationCandidate {
 export type CheckRunRecoveryState = "active" | "eligible" | "terminal";
 
 /**
- * A merge-queue or direct-fixture write remains owned by its original
+ * A merge-queue or direct GitHub merge write remains owned by its original
  * publisher until that publisher's run lease expires. Read-only observation
  * may prove its outcome, but only an expired publisher lease permits a
  * reconciler to advance the run itself.
@@ -927,7 +927,7 @@ export class RunLedger {
   }
 
   beginMerge(lease: RunLease, attempt: MergeAttempt, now = Date.now()): void {
-    const decision = this.decision("merge", "eligible", "MERGING", "A direct fixture merge is in progress.", now);
+    const decision = this.decision("merge", "eligible", "MERGING", "A SHA-pinned GitHub merge is in progress.", now);
     this.transition(
       lease,
       "merging",
@@ -1782,9 +1782,25 @@ export class RunLedger {
       }
       if (
         expectedStatus === "merging" &&
-        current.status !== "verified"
+        current.status !== "verified" &&
+        current.status !== "publishing"
       ) {
         throw new Error("Only a verified exact revision may begin a merge.");
+      }
+      if (expectedStatus === "merging" && current.status === "publishing") {
+        const evidenceCheck = this.database
+          .prepare(`
+            SELECT * FROM external_operations
+            WHERE run_key = ? AND kind = 'check_run_publish' AND state = 'observed_applied'
+            ORDER BY created_at DESC LIMIT 1
+          `)
+          .get(lease.runKey) as ExternalOperationRow | undefined;
+        const expectation = evidenceCheck
+          ? externalOperationFromRow(evidenceCheck).expectation
+          : undefined;
+        if (expectation?.expectedCheckConclusion !== "success") {
+          throw new Error("A protected API merge requires an acknowledged successful evidence Check Run.");
+        }
       }
       if (
         expectedStatus === "merged" ||

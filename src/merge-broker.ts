@@ -46,6 +46,7 @@ export function preflight(
   receipt: EvidenceReceipt,
   policy: MergePolicy,
   live: LivePullRequest,
+  requiredEvidenceCheck?: { name: string; appId: number },
 ): string | null {
   if (receipt.verdict !== "LOW_OBSERVED_RISK") {
     return `Verification verdict ${receipt.verdict} is not eligible for automatic merging.`;
@@ -80,6 +81,12 @@ export function preflight(
       return `Required live check is ${status}: ${check}${requiredAppId ? ` (App ${requiredAppId})` : ""}.`;
     }
   }
+  if (requiredEvidenceCheck) {
+    const status = findCheck(live, requiredEvidenceCheck.name, requiredEvidenceCheck.appId);
+    if (status !== "pass") {
+      return `Required VibeMerge evidence check is ${status}: ${requiredEvidenceCheck.name} (App ${requiredEvidenceCheck.appId}).`;
+    }
+  }
   return null;
 }
 
@@ -100,13 +107,21 @@ export class MergeBroker {
     lease: RunLease;
     /** Retained only in the outbound journal so recovery can mint a read token. */
     installationId: number;
+    /** API mode requires this controller-owned evidence Check Run to be green. */
+    requiredEvidenceCheck?: { name: string; appId: number };
     now?: Date;
   }): Promise<MergeDecision> {
     const live = await this.gateway.getPullRequest(
       input.revision.repository,
       input.revision.pullRequest,
     );
-    const failure = preflight(input.revision, input.receipt, input.policy, live);
+    const failure = preflight(
+      input.revision,
+      input.receipt,
+      input.policy,
+      live,
+      input.requiredEvidenceCheck,
+    );
     if (failure) {
       if (
         failure.includes("SHA changed") ||

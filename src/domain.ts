@@ -260,7 +260,7 @@ export interface MergePolicy {
   requiredChecks: string[];
   /**
    * Optional check-run App identities keyed by required check name. Production
-   * merge-queue activation requires a source for every required check.
+   * production automation requires a source for every required check.
    */
   requiredCheckAppIds?: Record<string, number>;
   mergeMethod: "merge" | "squash" | "rebase";

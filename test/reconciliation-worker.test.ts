@@ -77,7 +77,7 @@ test("queue recovery is not admitted while the original publisher lease is activ
   }
 });
 
-test("direct-fixture recovery is not admitted until publisher expiry", async () => {
+test("direct-merge recovery is not admitted until publisher expiry", async () => {
   for (const scenario of [
     {
       remoteState: "merged" as const,

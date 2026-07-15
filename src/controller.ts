@@ -33,7 +33,7 @@ export interface GitHubGatewayFactory {
   createReadGateway(token: string): Pick<MergeGateway, "getPullRequest"> & {
     /** Optional only for fixture adapters; required by Issue-to-Proof policy at runtime. */
     getIssue?: (repository: string, issueNumber: number) => Promise<CanonicalGitHubIssue>;
-    /** Required by production runtime before a PR can enter GitHub's merge queue. */
+    /** Required before production automation can trust branch-protected CI. */
     getRequiredStatusChecks?: (
       repository: string,
       branch: string,
@@ -48,8 +48,11 @@ export interface GitHubGatewayFactory {
 export interface MergeProofControllerPolicy {
   allowedRepositories: string[];
   autoMergeEnabled: boolean;
-  /** Direct REST merge is for fixture tests only; real automation uses GitHub's merge queue. */
-  mergeStrategy: "direct_fixture" | "merge_queue";
+  /**
+   * `github_api` is the production path for repositories without a GitHub
+   * merge queue. `direct_fixture` remains limited to injected test adapters.
+   */
+  mergeStrategy: "direct_fixture" | "github_api" | "merge_queue";
   verification: VerificationPolicy;
   merge: MergePolicy;
   /** Injected from mounted trusted artifacts at production runtime startup. */
@@ -87,6 +90,11 @@ function verificationReadPermissions(
 const mergePermissions = {
   contents: "write",
   pull_requests: "read",
+} as const;
+
+const githubApiMergePermissions = {
+  ...mergePermissions,
+  checks: "read",
 } as const;
 
 const queuePermissions = {
@@ -184,7 +192,7 @@ function isReusableReconciledPrHeadCheck(
 }
 
 /**
- * A controller-side CI policy is not enough for merge-queue production: every
+ * A controller-side CI policy is not enough for production automation: every
  * required Check Run must also be present in GitHub branch protection and
  * pinned to the App that produced it. Otherwise a later queue revision could
  * merge after a same-named or unrequired CI check changes.
@@ -192,13 +200,16 @@ function isReusableReconciledPrHeadCheck(
 export function sourcePinnedBranchProtectionFailure(
   policy: Pick<MergeProofControllerPolicy, "merge" | "requiredEvidenceCheck">,
   requiredChecks: RequiredStatusCheck[],
+  options: { includeEvidenceCheck?: boolean } = {},
 ): string | undefined {
   const requirements = [
     ...policy.merge.requiredChecks.map((name) => ({
       name,
       appId: policy.merge.requiredCheckAppIds?.[name],
     })),
-    ...(policy.requiredEvidenceCheck ? [policy.requiredEvidenceCheck] : []),
+    ...(options.includeEvidenceCheck !== false && policy.requiredEvidenceCheck
+      ? [policy.requiredEvidenceCheck]
+      : []),
   ];
   for (const requirement of requirements) {
     if (requirement.appId === undefined) {
@@ -596,10 +607,10 @@ export class MergeProofController {
         };
       }
 
-      // Merge queue eligibility is evaluated on the PR head, while the sealed
-      // receipt records the stronger current test-merge SHA. GitHub's later
-      // merge_group check re-verifies the actual queue-generated revision.
-      if (this.policy.mergeStrategy === "merge_queue") {
+      // Production strategies publish an auditable evidence Check Run after a
+      // fresh preflight. Queue mode re-verifies on a merge_group SHA; API mode
+      // performs one more PR read immediately before its SHA-pinned merge.
+      if (this.policy.mergeStrategy !== "direct_fixture") {
         let eligibilityReason: string | undefined;
         if (receipt.verdict === "LOW_OBSERVED_RISK" && this.policy.autoMergeEnabled) {
           const finalReadToken = await this.tokens.mint({
@@ -615,18 +626,24 @@ export class MergeProofController {
           eligibilityReason = preflight(revision, receipt, this.policy.merge, finalLive) ?? undefined;
           if (!eligibilityReason && this.policy.requiredEvidenceCheck) {
             if (!finalLive.baseRef || !finalReadGateway.getRequiredStatusChecks) {
-              eligibilityReason = "Cannot verify that GitHub requires the final MergeProof merge-group Check Run.";
+              eligibilityReason = this.policy.mergeStrategy === "merge_queue"
+                ? "Cannot verify that GitHub requires the final MergeProof merge-group Check Run."
+                : "Cannot verify that GitHub requires VibeMerge's source-pinned CI checks.";
             } else {
               const requiredChecks = await finalReadGateway.getRequiredStatusChecks(
                 trigger.repository,
                 finalLive.baseRef,
               );
-              eligibilityReason = sourcePinnedBranchProtectionFailure(this.policy, requiredChecks);
+              eligibilityReason = sourcePinnedBranchProtectionFailure(
+                this.policy,
+                requiredChecks,
+                { includeEvidenceCheck: this.policy.mergeStrategy === "merge_queue" },
+              );
             }
           }
         }
         if (!this.gateways.createCheckRunGateway) {
-          throw new Error("Merge-queue strategy requires a Check Run gateway.");
+          throw new Error("Protected merge automation requires a Check Run gateway.");
         }
         const eligibleForQueue =
           receipt.verdict === "LOW_OBSERVED_RISK" &&
@@ -762,7 +779,7 @@ export class MergeProofController {
             receipt,
             "Automatic merge is disabled by the active MergeProof policy.",
           );
-        } else if (this.policy.mergeStrategy === "merge_queue") {
+        } else if (this.policy.mergeStrategy !== "direct_fixture") {
           await this.publishCommentBestEffort(trigger, receipt);
         }
         return { state: "verified", receipt };
@@ -835,7 +852,9 @@ export class MergeProofController {
       const writeToken = await this.tokens.mint({
         installationId: trigger.installationId,
         repository: trigger.repository,
-        permissions: mergePermissions,
+        permissions: this.policy.mergeStrategy === "github_api"
+          ? githubApiMergePermissions
+          : mergePermissions,
       });
       heartbeat.assertHealthy();
       const decision = await new MergeBroker(
@@ -848,6 +867,9 @@ export class MergeProofController {
         lease,
         installationId: trigger.installationId,
         now,
+        ...(this.policy.mergeStrategy === "github_api" && this.policy.requiredEvidenceCheck
+          ? { requiredEvidenceCheck: this.policy.requiredEvidenceCheck }
+          : {}),
       });
       return {
         state: decision.outcome === "MERGED" ? "merged" : "not_merged",

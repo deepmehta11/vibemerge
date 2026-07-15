@@ -192,6 +192,71 @@ test("controller independently reloads state and mints write permission only for
   }
 });
 
+test("GitHub API strategy publishes evidence then merges only the exact verified head", async () => {
+  const tokens = new RecordingTokens();
+  const requiredEvidenceCheck = { name: "MergeProof / evidence", appId: 777 };
+  const protectedChecks = [
+    { name: "ci / test", status: "pass" as const, appId: 41 },
+    { name: "ci / security", status: "pass" as const, appId: 42 },
+  ];
+  const mergeGateway = new MemoryMergeGateway(live({
+    baseRef: "main",
+    checks: [...protectedChecks, { ...requiredEvidenceCheck, status: "pass" as const }],
+  }));
+  const checkWrites: string[] = [];
+  const ledger = new RunLedger();
+  try {
+    const result = await new MergeProofController(
+      {
+        allowedRepositories: [trigger.repository],
+        autoMergeEnabled: true,
+        mergeStrategy: "github_api",
+        verification: demoVerificationPolicy,
+        merge: {
+          ...demoMergePolicy,
+          requiredCheckAppIds: { "ci / test": 41, "ci / security": 42 },
+        },
+        requiredEvidenceCheck,
+      },
+      tokens,
+      {
+        createReadGateway: () => ({
+          getPullRequest: async () => live({ baseRef: "main", checks: protectedChecks }),
+          getRequiredStatusChecks: async () => [
+            { name: "ci / test", appId: 41 },
+            { name: "ci / security", appId: 42 },
+          ],
+        }),
+        createMergeGateway: () => mergeGateway,
+        createCheckRunGateway: () => ({
+          createInProgress: async () => {
+            checkWrites.push("created");
+            return { id: 5 };
+          },
+          complete: async () => {
+            checkWrites.push("completed");
+          },
+        }),
+      },
+      new FixtureEvidenceHarness(safeFixture()),
+      ledger,
+      () => new Date("2026-07-14T18:00:00.000Z"),
+    ).process(trigger);
+
+    assert.equal(result.state, "merged");
+    assert.equal(mergeGateway.mergeCalls, 1);
+    assert.deepEqual(checkWrites, ["created", "completed"]);
+    assert.deepEqual(tokens.requests.map((request) => request.permissions), [
+      { contents: "read", pull_requests: "read", checks: "read", administration: "read" },
+      { contents: "read", pull_requests: "read", checks: "read", administration: "read" },
+      { checks: "write" },
+      { contents: "write", pull_requests: "read", checks: "read" },
+    ]);
+  } finally {
+    ledger.close();
+  }
+});
+
 test("incomplete proof never receives a write token", async () => {
   const tokens = new RecordingTokens();
   const factory: GitHubGatewayFactory = {

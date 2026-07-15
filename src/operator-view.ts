@@ -4,7 +4,7 @@ import type { AutomationControl, LedgerRun, OperatorLedgerStats, RunDecision } f
 
 export interface OperatorPolicySummary {
   autoMergeEnabled: boolean;
-  mergeStrategy: "direct_fixture" | "merge_queue";
+  mergeStrategy: "direct_fixture" | "github_api" | "merge_queue";
   allowedRepositoryCount: number;
 }
 

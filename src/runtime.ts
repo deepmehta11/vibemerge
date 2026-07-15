@@ -42,7 +42,7 @@ const policySchema = z.object({
     .min(1, "At least 1 allowed repository must be configured.")
     .refine(unique, "Allowed repositories must be unique."),
   autoMergeEnabled: z.boolean(),
-  mergeStrategy: z.enum(["direct_fixture", "merge_queue"]).default("merge_queue"),
+  mergeStrategy: z.enum(["direct_fixture", "github_api", "merge_queue"]).default("merge_queue"),
   verification: z
     .object({
       version: z.string().min(1),
@@ -277,7 +277,7 @@ export function loadControllerPolicy(path: string): MergeProofControllerPolicy {
   return parseControllerPolicy(raw);
 }
 
-/** Rejects configuration that would weaken the production merge-queue gate. */
+/** Rejects configuration that would weaken a production merge gate. */
 export function assertRuntimePolicySafe(
   policy: MergeProofControllerPolicy,
 ): void {
@@ -291,17 +291,23 @@ export function assertRuntimePolicySafe(
   }
   if (policy.autoMergeEnabled && policy.mergeStrategy === "direct_fixture") {
     throw new Error(
-      "Direct REST automatic merge is never available in the runtime. Use merge-queue validation; direct_fixture exists only for injected tests and demos.",
+      "direct_fixture exists only for injected tests and demos. Use github_api or merge_queue in production.",
     );
   }
-  if (policy.autoMergeEnabled && policy.mergeStrategy === "merge_queue") {
+  if (
+    policy.autoMergeEnabled &&
+    (policy.mergeStrategy === "github_api" || policy.mergeStrategy === "merge_queue")
+  ) {
     const sources = policy.merge.requiredCheckAppIds ?? {};
     const missingSources = policy.merge.requiredChecks.filter((name) => !sources[name]);
     if (missingSources.length > 0) {
       throw new Error(
-        `Production merge-queue policy requires an App id for every required check: ${missingSources.join(", ")}.`,
+        `Production merge policy requires an App id for every required check: ${missingSources.join(", ")}.`,
       );
     }
+  }
+  if (policy.autoMergeEnabled && policy.mergeStrategy === "github_api" && !policy.requiredEvidenceCheck) {
+    throw new Error("Production github_api policy requires VibeMerge's own evidence Check Run identity.");
   }
 }
 

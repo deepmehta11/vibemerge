@@ -101,7 +101,7 @@ test("runtime rejects an incomplete or malformed policy", () => {
   );
 });
 
-test("runtime requires source-pinned required checks before enabling merge-queue automation", () => {
+test("runtime requires source-pinned required checks before enabling protected automation", () => {
   assert.throws(
     () =>
       assertRuntimePolicySafe(parseControllerPolicy({
@@ -119,6 +119,23 @@ test("runtime requires source-pinned required checks before enabling merge-queue
         requiredCheckAppIds: { "ci / test": 123 },
       },
     })),
+  );
+});
+
+test("runtime permits SHA-pinned GitHub API automation with source-pinned CI", () => {
+  assert.doesNotThrow(() =>
+    assertRuntimePolicySafe({
+      ...parseControllerPolicy({
+        ...policy,
+        autoMergeEnabled: true,
+        mergeStrategy: "github_api",
+        merge: {
+          ...policy.merge,
+          requiredCheckAppIds: { "ci / test": 123 },
+        },
+      }),
+      requiredEvidenceCheck: { name: "MergeProof / evidence", appId: 777 },
+    }),
   );
 });
 
@@ -146,7 +163,7 @@ test("runtime never enables the direct fixture merge path", () => {
         autoMergeEnabled: true,
         mergeStrategy: "direct_fixture",
       })),
-    /never available in the runtime/i,
+    /injected tests and demos/i,
   );
 });
 
