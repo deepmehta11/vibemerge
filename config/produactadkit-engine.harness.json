@@ -1,0 +1,52 @@
+{
+  "version": "produactadkit-engine-harness-v1",
+  "checks": [
+    {
+      "id": "source-contract",
+      "kind": "deterministic_gate",
+      "required": true,
+      "probe": "produactadkit-engine/produactadkit-engine.mjs",
+      "args": ["source-contract"],
+      "detail": "The Product AdKit application modules required by the trusted profile are present and syntactically valid.",
+      "timeoutMs": 30000
+    },
+    {
+      "id": "frozen-product-contracts",
+      "kind": "protected_behavior",
+      "required": true,
+      "probe": "produactadkit-engine/produactadkit-engine.mjs",
+      "args": ["frozen-product-contracts"],
+      "detail": "Controller-owned baseline tests preserve scene taxonomy and prompt construction behavior.",
+      "timeoutMs": 60000
+    },
+    {
+      "id": "model-off-person-guard",
+      "kind": "adversarial",
+      "required": true,
+      "probe": "produactadkit-engine/produactadkit-engine.mjs",
+      "args": ["model-off-person-guard"],
+      "detail": "Controller-owned adversarial inputs keep product-only copy from being treated as a human scene while retaining real-person detection.",
+      "timeoutMs": 30000
+    }
+  ],
+  "metrics": [
+    {
+      "name": "p95_latency_ms",
+      "required": true,
+      "probe": "produactadkit-engine/produactadkit-engine.mjs",
+      "args": ["p95-latency"],
+      "detail": "Fixed controller-owned product-contract suite wall-clock latency, with worst-observed aggregation.",
+      "timeoutMs": 60000,
+      "workloadProfile": { "repetitions": 3, "aggregation": "max" }
+    },
+    {
+      "name": "peak_memory_mb",
+      "required": true,
+      "probe": "produactadkit-engine/produactadkit-engine.mjs",
+      "args": ["peak-memory"],
+      "detail": "Fixed controller-owned product-contract suite peak Python resident memory, with worst-observed aggregation.",
+      "timeoutMs": 60000,
+      "workloadProfile": { "repetitions": 3, "aggregation": "max" }
+    }
+  ]
+}

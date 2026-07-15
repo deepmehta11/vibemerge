@@ -22,6 +22,30 @@ const maxWorkloadProfileBudgetMs = 5 * 60_000;
 const maxTotalProbeBudgetMs = 20 * 60_000;
 const trustedProbesDir = process.env.MERGEPROOF_TRUSTED_PROBES_DIR ?? "/workspace/probes";
 
+/**
+ * A probe runs controller-owned code against candidate source.  It must not
+ * inherit the harness's whole environment: even though E2B has no egress,
+ * tests can print inherited values into candidate-influenced output.  Preserve
+ * only runtime plumbing plus explicit MergeProof coordinates.
+ */
+function trustedProbeEnvironment(workload) {
+  const environment = {
+    PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    HOME: process.env.HOME ?? "/tmp",
+    TMPDIR: process.env.TMPDIR ?? "/tmp",
+    LANG: process.env.LANG ?? "C.UTF-8",
+    LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
+    TZ: "UTC",
+    MERGEPROOF_SOURCE_DIR: undefined,
+    MERGEPROOF_PHASE: process.env.MERGEPROOF_PHASE ?? "candidate",
+  };
+  if (workload) {
+    environment.MERGEPROOF_WORKLOAD_ITERATION = String(workload.iteration);
+    environment.MERGEPROOF_WORKLOAD_REPETITIONS = String(workload.repetitions);
+  }
+  return environment;
+}
+
 function clean(value, maxLength = 500) {
   return String(value)
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
@@ -174,15 +198,8 @@ function run(probe, args, cwd, timeoutMs, workload) {
   const result = spawnSync(process.execPath, [join(trustedProbesDir, probe), ...args], {
     cwd,
     env: {
-      ...process.env,
+      ...trustedProbeEnvironment(workload),
       MERGEPROOF_SOURCE_DIR: cwd,
-      MERGEPROOF_PHASE: process.env.MERGEPROOF_PHASE ?? "candidate",
-      ...(workload
-        ? {
-            MERGEPROOF_WORKLOAD_ITERATION: String(workload.iteration),
-            MERGEPROOF_WORKLOAD_REPETITIONS: String(workload.repetitions),
-          }
-        : {}),
     },
     encoding: "utf8",
     timeout: timeoutMs,

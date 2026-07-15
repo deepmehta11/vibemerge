@@ -86,6 +86,9 @@ test("runtime bundle changes identity when a mounted trusted artifact changes", 
       }),
     );
     writeFileSync(join(probes, "regression.mjs"), "export const expected = 'one';\n");
+    mkdirSync(join(probes, "assets"));
+    writeFileSync(join(probes, "assets", "regression.py"), "assert True\n");
+    writeFileSync(join(probes, "assets", "pytest.ini"), "[pytest]\n");
 
     const input = {
       template,
@@ -100,6 +103,8 @@ test("runtime bundle changes identity when a mounted trusted artifact changes", 
 
     assert.notEqual(first.digest, second.digest);
     assert.equal(first.workspaceFiles["/workspace/probes/regression.mjs"] instanceof Uint8Array, true);
+    assert.equal(first.workspaceFiles["/workspace/probes/assets/regression.py"] instanceof Uint8Array, true);
+    assert.equal(first.workspaceFiles["/workspace/probes/assets/pytest.ini"] instanceof Uint8Array, true);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -23,6 +23,9 @@ test("trusted harness measures base and candidate source archives with policy-ow
 import { join } from "node:path";
 const action = process.argv[2];
 const source = process.env.MERGEPROOF_SOURCE_DIR;
+if (process.env.MERGEPROOF_TEST_PARENT_SECRET) {
+  throw new Error("probe inherited a parent secret");
+}
 if (action === "ci") {
   process.stdout.write("sk-proj_abcdefghijklmnopqrstuvwxyz0123456789");
   process.exitCode = existsSync(join(source, "present.txt")) ? 0 : 1;
@@ -90,6 +93,7 @@ else process.exitCode = 1;
           MERGEPROOF_SOURCE_ARCHIVE: archive,
           MERGEPROOF_HARNESS_SPEC_PATH: spec,
           MERGEPROOF_TRUSTED_PROBES_DIR: probes,
+          MERGEPROOF_TEST_PARENT_SECRET: "must-not-reach-probe",
         },
         encoding: "utf8",
       });

@@ -1,0 +1,13 @@
+# Controller-owned test runtime for mvplab-ai/produactadkit-engine.
+#
+# The immutable E2B build ID is the actual execution identity.  These direct
+# pins document the inputs used to create that build and prevent a PR from
+# changing the test environment through its own requirements.txt.
+fastapi==0.138.0
+httpx==0.28.1
+numpy==2.4.6
+pillow==12.2.0
+playwright==1.59.0
+pydantic==2.13.4
+pytest==9.1.1
+python-multipart==0.0.32

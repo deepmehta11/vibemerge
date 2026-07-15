@@ -189,6 +189,15 @@ function positiveInteger(value: string, name: string): number {
   return parsed;
 }
 
+/**
+ * Probes remain JavaScript entry points.  A sealed probe can also need
+ * controller-owned, non-executable assets (for example frozen Python tests
+ * that are copied over a candidate's test directory before execution).  Keep
+ * the allowlist deliberately small so artifact mounting never becomes a way
+ * to smuggle arbitrary binaries or shell scripts into E2B.
+ */
+const trustedProbeAssetPath = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.(?:mjs|py|json|toml|ini|lock)$/;
+
 function loadTrustedProbeFiles(directory: string): Record<string, Uint8Array> {
   const root = resolve(directory);
   const files: Record<string, Uint8Array> = {};
@@ -207,15 +216,17 @@ function loadTrustedProbeFiles(directory: string): Record<string, Uint8Array> {
         throw new Error("Trusted probe files must be regular files no larger than 1 MiB.");
       }
       const pathInWorkspace = relative(root, path).replaceAll("\\", "/");
-      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*\.mjs$/.test(pathInWorkspace) || pathInWorkspace.includes("..")) {
-        throw new Error("Trusted probe files must use safe relative .mjs paths.");
+      if (!trustedProbeAssetPath.test(pathInWorkspace) || pathInWorkspace.includes("..")) {
+        throw new Error(
+          "Trusted probe files must use safe relative .mjs, .py, .json, .toml, .ini, or .lock paths.",
+        );
       }
       files[`/workspace/probes/${pathInWorkspace}`] = readFileSync(path);
     }
   };
   visit(root);
-  if (Object.keys(files).length === 0) {
-    throw new Error("Trusted probe directory must contain at least one .mjs probe.");
+  if (!Object.keys(files).some((path) => path.endsWith(".mjs"))) {
+    throw new Error("Trusted probe directory must contain at least one .mjs probe entrypoint.");
   }
   return files;
 }

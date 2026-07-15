@@ -1,0 +1,27 @@
+{
+  "allowedRepositories": ["mvplab-ai/produactadkit-engine"],
+  "autoMergeEnabled": false,
+  "mergeStrategy": "merge_queue",
+  "verification": {
+    "version": "produactadkit-engine-v1",
+    "requiredCheckIds": [
+      "source-contract",
+      "frozen-product-contracts",
+      "model-off-person-guard"
+    ],
+    "requiredMetricNames": ["p95_latency_ms", "peak_memory_mb"],
+    "requireBugReproduction": false,
+    "requireAdversarialChecks": true,
+    "requireHunkClosure": false,
+    "metricThresholds": {
+      "p95_latency_ms": { "maxRatio": 1.4, "maxAbsolute": 250 },
+      "peak_memory_mb": { "maxRatio": 1.25, "maxAbsolute": 32 }
+    }
+  },
+  "merge": {
+    "requiredApprovals": 1,
+    "requiredLabels": ["vibemerge:auto"],
+    "requiredChecks": ["ci / test"],
+    "mergeMethod": "squash"
+  }
+}
