@@ -372,7 +372,7 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): MergeProofR
       createMergeGateway: (token) => new GitHubRestGateway(token),
       createQueueGateway: (token) => new GitHubMergeQueueGateway(token),
       createCheckRunGateway: (token) => new GitHubCheckRunGateway(token),
-      createCommentGateway: (token) => new GitHubPullRequestCommentGateway(token),
+      createCommentGateway: (token) => new GitHubPullRequestCommentGateway(token, requiredEvidenceCheck.appId),
     },
     undefined,
     ledger,

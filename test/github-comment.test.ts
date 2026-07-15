@@ -65,18 +65,18 @@ test("evidence comment renders sealed Issue-to-Proof observations without publis
   assert.doesNotMatch(rendered, /Fix duplicate settlement|must-not-render|Model assertion|candidate command output|sealed-digest/);
 });
 
-test("comment upsert edits only the current installation's managed comment", async () => {
+test("comment upsert edits only the current GitHub App's managed comment", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const responses = [
-    { id: 7 },
     [
-      { id: 11, body: "<!-- mergeproof:managed --> old", user: { id: 8 } },
-      { id: 12, body: "<!-- mergeproof:managed --> ours", user: { id: 7 } },
+      { id: 11, body: "<!-- mergeproof:managed --> old", performed_via_github_app: { id: 8 } },
+      { id: 12, body: "<!-- mergeproof:managed --> ours", performed_via_github_app: { id: 7 } },
     ],
     { id: 12 },
   ];
   const gateway = new GitHubPullRequestCommentGateway(
     "comments-token",
+    7,
     async (url, init) => {
       calls.push({ url: String(url), ...(init ? { init } : {}) });
       return new Response(JSON.stringify(responses.shift()), {
@@ -90,17 +90,17 @@ test("comment upsert edits only the current installation's managed comment", asy
     pullRequest: 42,
     receipt: await receipt(),
   });
-  assert.equal(calls[0]?.url, "https://api.github.com/user");
-  assert.match(calls[1]?.url ?? "", /issues\/42\/comments/);
-  assert.equal(calls[2]?.url, "https://api.github.com/repos/acme/checkout-service/issues/comments/12");
-  assert.equal(calls[2]?.init?.method, "PATCH");
+  assert.match(calls[0]?.url ?? "", /issues\/42\/comments/);
+  assert.equal(calls[1]?.url, "https://api.github.com/repos/acme/checkout-service/issues/comments/12");
+  assert.equal(calls[1]?.init?.method, "PATCH");
 });
 
 test("comment upsert creates a new comment instead of mutating a copied marker", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const responses = [{ id: 7 }, [{ id: 11, body: "<!-- mergeproof:managed --> copied", user: { id: 8 } }], { id: 13 }];
+  const responses = [[{ id: 11, body: "<!-- mergeproof:managed --> copied", performed_via_github_app: null }], { id: 13 }];
   const gateway = new GitHubPullRequestCommentGateway(
     "comments-token",
+    7,
     async (url, init) => {
       calls.push({ url: String(url), ...(init ? { init } : {}) });
       return new Response(JSON.stringify(responses.shift()), {
@@ -114,25 +114,25 @@ test("comment upsert creates a new comment instead of mutating a copied marker",
     pullRequest: 42,
     receipt: await receipt(),
   });
-  assert.equal(calls[2]?.url, "https://api.github.com/repos/acme/checkout-service/issues/42/comments");
-  assert.equal(calls[2]?.init?.method, "POST");
+  assert.equal(calls[1]?.url, "https://api.github.com/repos/acme/checkout-service/issues/42/comments");
+  assert.equal(calls[1]?.init?.method, "POST");
 });
 
 test("comment upsert finds its managed comment after a full first page", async () => {
   const firstPage = Array.from({ length: 100 }, (_, index) => ({
     id: index + 1,
     body: "unmanaged",
-    user: { id: 8 },
+    performed_via_github_app: { id: 8 },
   }));
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const responses = [
-    { id: 7 },
     firstPage,
-    [{ id: 201, body: "<!-- mergeproof:managed --> ours", user: { id: 7 } }],
+    [{ id: 201, body: "<!-- mergeproof:managed --> ours", performed_via_github_app: { id: 7 } }],
     { id: 201 },
   ];
   const gateway = new GitHubPullRequestCommentGateway(
     "comments-token",
+    7,
     async (url, init) => {
       calls.push({ url: String(url), ...(init ? { init } : {}) });
       return new Response(JSON.stringify(responses.shift()), {
@@ -144,8 +144,8 @@ test("comment upsert finds its managed comment after a full first page", async (
 
   await gateway.upsert({ repository: "acme/checkout-service", pullRequest: 42, receipt: await receipt() });
 
-  assert.match(calls[1]?.url ?? "", /page=1/);
-  assert.match(calls[2]?.url ?? "", /page=2/);
-  assert.equal(calls[3]?.url, "https://api.github.com/repos/acme/checkout-service/issues/comments/201");
-  assert.equal(calls[3]?.init?.method, "PATCH");
+  assert.match(calls[0]?.url ?? "", /page=1/);
+  assert.match(calls[1]?.url ?? "", /page=2/);
+  assert.equal(calls[2]?.url, "https://api.github.com/repos/acme/checkout-service/issues/comments/201");
+  assert.equal(calls[2]?.init?.method, "PATCH");
 });

@@ -159,17 +159,18 @@ Receipt integrity: \`${receipt.integrityHash}\``;
 type GitHubComment = {
   id?: unknown;
   body?: unknown;
-  user?: { id?: unknown } | null;
+  performed_via_github_app?: { id?: unknown } | null;
 };
 
 /**
- * Upserts one comment per PR, but only mutates a comment owned by the current
- * installation identity. A user cannot trick MergeProof into editing theirs by
- * copying the marker.
+ * Upserts one comment per PR, but only mutates a comment GitHub attributes to
+ * the configured App. Installation access tokens cannot call GET /user, so
+ * ownership comes from the comment's performed_via_github_app identity.
  */
 export class GitHubPullRequestCommentGateway implements PullRequestCommentGateway {
   constructor(
     private readonly token: string,
+    private readonly appId: number,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly apiBase = "https://api.github.com",
   ) {}
@@ -180,9 +181,8 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
     receipt: EvidenceReceipt;
     eligibilityReason?: string;
   }): Promise<void> {
-    const authenticated = await this.request<{ id?: unknown }>("/user");
-    if (typeof authenticated.id !== "number" || !Number.isSafeInteger(authenticated.id)) {
-      throw new Error("GitHub installation identity response is missing a numeric id.");
+    if (!Number.isSafeInteger(this.appId) || this.appId < 1) {
+      throw new Error("GitHub App comment ownership requires a positive App id.");
     }
     const body = renderEvidenceComment(input.receipt, input.eligibilityReason);
     for (let page = 1; page <= 20; page += 1) {
@@ -193,7 +193,7 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
         (comment) =>
           typeof comment.id === "number" &&
           typeof comment.body === "string" &&
-          comment.user?.id === authenticated.id &&
+          comment.performed_via_github_app?.id === this.appId &&
           comment.body.includes(managedMarker),
       );
       if (managed && typeof managed.id === "number") {
