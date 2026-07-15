@@ -26,8 +26,7 @@ function mustPass(check: PairedCheck): boolean {
   return (
     check.kind === "deterministic_gate" ||
     check.kind === "protected_behavior" ||
-    check.kind === "adversarial" ||
-    check.kind === "hunk_closure"
+    check.kind === "adversarial"
   );
 }
 
@@ -83,6 +82,19 @@ export function evaluateEvidence(
       } else if (check.base !== "fail") {
         incomplete.push(
           reason("INCOMPLETE_PROOF", check.id, `${check.detail}: the base revision did not reproduce the bug.`),
+        );
+      }
+      continue;
+    }
+
+    if (check.kind === "hunk_closure") {
+      // A hunk-closure probe may intentionally observe the defect on the base
+      // revision. Its obligation is that the candidate closes the observed
+      // behavior; requiring a base pass would make a proven bug fix impossible
+      // to merge.
+      if (check.candidate === "fail") {
+        blocked.push(
+          reason("CHECK_FAILED", check.id, `${check.detail}: the candidate did not close the changed behavior.`),
         );
       }
       continue;

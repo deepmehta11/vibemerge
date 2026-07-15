@@ -40,6 +40,34 @@ test("a reproducible latency regression blocks automatic merge", async () => {
   assert.equal(receipt.reasons[0]?.code, "RESOURCE_REGRESSION");
 });
 
+test("hunk closure may fail on the base when the candidate closes that changed behavior", async () => {
+  const scenario = safeFixture();
+  scenario.base.checks = scenario.base.checks.map((check) =>
+    check.id === "changed-hunks" ? { ...check, status: "fail" } : check,
+  );
+
+  const receipt = await new VerificationEngine(
+    new FixtureEvidenceHarness(scenario),
+  ).verify(demoRevision, demoVerificationPolicy);
+
+  assert.equal(receipt.verdict, "LOW_OBSERVED_RISK");
+  assert.equal(receipt.reasons.length, 0);
+});
+
+test("a candidate hunk-closure failure blocks automatic merge", async () => {
+  const scenario = safeFixture();
+  scenario.candidate.checks = scenario.candidate.checks.map((check) =>
+    check.id === "changed-hunks" ? { ...check, status: "fail" } : check,
+  );
+
+  const receipt = await new VerificationEngine(
+    new FixtureEvidenceHarness(scenario),
+  ).verify(demoRevision, demoVerificationPolicy);
+
+  assert.equal(receipt.verdict, "BLOCK");
+  assert.ok(receipt.reasons.some((reason) => reason.subject === "changed-hunks"));
+});
+
 test("an omitted policy-owned obligation cannot become low observed risk", async () => {
   const scenario = safeFixture();
   scenario.candidate.checks = scenario.candidate.checks.filter(
