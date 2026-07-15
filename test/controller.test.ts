@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MergeProofController,
+  commentFailureDiagnostic,
   policyDigest,
   trustedArtifactDigestForPolicy,
   type GitHubGatewayFactory,
@@ -68,6 +69,21 @@ class RecordingTokens implements InstallationTokenProvider {
     return { token: `token-${this.requests.length}`, expiresAt: "2026-07-14T19:00:00Z" };
   }
 }
+
+test("comment publication diagnostics expose only a fixed stage and status", () => {
+  assert.deepEqual(
+    commentFailureDiagnostic(new Error("GitHub installation token request 403: omitted")),
+    { stage: "token_mint", status: "403" },
+  );
+  assert.deepEqual(
+    commentFailureDiagnostic(new Error("GitHub PR comment API 403: omitted")),
+    { stage: "comment_api", status: "403" },
+  );
+  assert.deepEqual(
+    commentFailureDiagnostic(new Error("candidate-controlled detail must not be logged")),
+    { stage: "comment_gateway", status: "unknown" },
+  );
+});
 
 test("a durable operator pause blocks a PR before token minting or sandbox work", async () => {
   const tokens = new RecordingTokens();

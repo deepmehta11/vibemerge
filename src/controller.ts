@@ -108,10 +108,17 @@ const commentPermissions = {
 const DEFAULT_VERIFICATION_RUN_LEASE_MS = 20 * 60_000;
 const AUTOMATION_PAUSED_REASON = "MergeProof automatic merge is paused by an operator.";
 
-function commentFailureStatus(error: unknown): string {
+export function commentFailureDiagnostic(error: unknown): { stage: "token_mint" | "comment_api" | "comment_gateway"; status: string } {
   const message = error instanceof Error ? error.message : "";
-  const match = /^GitHub PR comment API ([1-5]\d{2}):/.exec(message);
-  return match?.[1] ?? "unknown";
+  const tokenFailure = /^GitHub installation token request ([1-5]\d{2}):/.exec(message);
+  if (tokenFailure) {
+    return { stage: "token_mint", status: tokenFailure[1]! };
+  }
+  const commentFailure = /^GitHub PR comment API ([1-5]\d{2}):/.exec(message);
+  if (commentFailure) {
+    return { stage: "comment_api", status: commentFailure[1]! };
+  }
+  return { stage: "comment_gateway", status: "unknown" };
 }
 
 function requiredCheckStatus(
@@ -521,10 +528,11 @@ export class MergeProofController {
     } catch (error) {
       // The evidence Check Run and queue operation are the authoritative
       // surfaces. The next eligible delivery can refresh this explanation.
-      // Emit only an HTTP status: GitHub response bodies may contain
-      // candidate-influenced text and must never enter controller logs.
+      // Emit only a fixed stage and HTTP status: GitHub response bodies may
+      // contain candidate-influenced text and must never enter controller logs.
+      const diagnostic = commentFailureDiagnostic(error);
       console.warn(
-        `[WARN] service="mergeproof" event="comment_publication_failed" status="${commentFailureStatus(error)}"`,
+        `[WARN] service="mergeproof" event="comment_publication_failed" stage="${diagnostic.stage}" status="${diagnostic.status}"`,
       );
     }
   }
