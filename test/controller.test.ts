@@ -439,7 +439,7 @@ test("merge-queue strategy enqueues only a sealed low-risk exact head", async ()
       { contents: "read", pull_requests: "read", checks: "read" },
       { checks: "write" },
       { pull_requests: "write" },
-      { issues: "write" },
+      { pull_requests: "write" },
     ]);
   } finally {
     ledger.close();

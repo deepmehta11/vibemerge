@@ -103,7 +103,11 @@ const checkPermissions = {
 } as const;
 
 const commentPermissions = {
-  issues: "write",
+  // GitHub documents pull-request write access as valid for PR issue
+  // comments. Scope the token to the PR resource instead of the broader
+  // Issues surface; the installation's issue-only token was rejected by the
+  // private PR comment-list endpoint in the controlled live fixture.
+  pull_requests: "write",
 } as const;
 const DEFAULT_VERIFICATION_RUN_LEASE_MS = 20 * 60_000;
 const AUTOMATION_PAUSED_REASON = "MergeProof automatic merge is paused by an operator.";
