@@ -23,7 +23,7 @@
   "merge": {
     "requiredApprovals": 0,
     "requiredLabels": [],
-    "requiredChecks": ["fixture / ci"],
+    "requiredChecks": ["ci"],
     "mergeMethod": "squash"
   }
 }
