@@ -188,6 +188,8 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
     for (let page = 1; page <= 20; page += 1) {
       const comments = await this.request<GitHubComment[]>(
         `/repos/${input.repository}/issues/${input.pullRequest}/comments?per_page=100&sort=updated&direction=desc&page=${page}`,
+        {},
+        "list",
       );
       const managed = comments.find(
         (comment) =>
@@ -200,7 +202,7 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
         await this.request(`/repos/${input.repository}/issues/comments/${managed.id}`, {
           method: "PATCH",
           body: JSON.stringify({ body }),
-        });
+        }, "update");
         return;
       }
       if (comments.length < 100) {
@@ -210,10 +212,14 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
     await this.request(`/repos/${input.repository}/issues/${input.pullRequest}/comments`, {
       method: "POST",
       body: JSON.stringify({ body }),
-    });
+    }, "create");
   }
 
-  private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T = unknown>(
+    path: string,
+    init: RequestInit = {},
+    operation: "list" | "create" | "update",
+  ): Promise<T> {
     const response = await this.fetchImpl(`${this.apiBase}${path}`, {
       ...init,
       headers: {
@@ -224,7 +230,9 @@ export class GitHubPullRequestCommentGateway implements PullRequestCommentGatewa
       },
     });
     if (!response.ok) {
-      throw new Error(`GitHub PR comment API ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      throw new Error(
+        `GitHub PR comment API ${operation} ${response.status}: ${(await response.text()).slice(0, 500)}`,
+      );
     }
     return (await response.json()) as T;
   }

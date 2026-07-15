@@ -76,8 +76,8 @@ test("comment publication diagnostics expose only a fixed stage and status", () 
     { stage: "token_mint", status: "403" },
   );
   assert.deepEqual(
-    commentFailureDiagnostic(new Error("GitHub PR comment API 403: omitted")),
-    { stage: "comment_api", status: "403" },
+    commentFailureDiagnostic(new Error("GitHub PR comment API create 403: omitted")),
+    { stage: "comment_create", status: "403" },
   );
   assert.deepEqual(
     commentFailureDiagnostic(new Error("candidate-controlled detail must not be logged")),

@@ -108,15 +108,18 @@ const commentPermissions = {
 const DEFAULT_VERIFICATION_RUN_LEASE_MS = 20 * 60_000;
 const AUTOMATION_PAUSED_REASON = "MergeProof automatic merge is paused by an operator.";
 
-export function commentFailureDiagnostic(error: unknown): { stage: "token_mint" | "comment_api" | "comment_gateway"; status: string } {
+export function commentFailureDiagnostic(error: unknown): {
+  stage: "token_mint" | "comment_list" | "comment_create" | "comment_update" | "comment_gateway";
+  status: string;
+} {
   const message = error instanceof Error ? error.message : "";
   const tokenFailure = /^GitHub installation token request ([1-5]\d{2}):/.exec(message);
   if (tokenFailure) {
     return { stage: "token_mint", status: tokenFailure[1]! };
   }
-  const commentFailure = /^GitHub PR comment API ([1-5]\d{2}):/.exec(message);
+  const commentFailure = /^GitHub PR comment API (list|create|update) ([1-5]\d{2}):/.exec(message);
   if (commentFailure) {
-    return { stage: "comment_api", status: commentFailure[1]! };
+    return { stage: `comment_${commentFailure[1]}` as "comment_list" | "comment_create" | "comment_update", status: commentFailure[2]! };
   }
   return { stage: "comment_gateway", status: "unknown" };
 }
