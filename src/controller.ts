@@ -877,6 +877,7 @@ export class MergeProofController {
           ? { requiredEvidenceCheck: this.policy.requiredEvidenceCheck }
           : {}),
       });
+      await this.publishCommentBestEffort(trigger, receipt, decision.reason);
       return {
         state: decision.outcome === "MERGED" ? "merged" : "not_merged",
         receipt,

@@ -203,6 +203,7 @@ test("GitHub API strategy needs no branch protection while preserving exact live
     checks: [...sourcePinnedChecks, { ...requiredEvidenceCheck, status: "pass" as const }],
   }));
   const checkWrites: string[] = [];
+  const commentReasons: Array<string | undefined> = [];
   const ledger = new RunLedger();
   try {
     const result = await new MergeProofController(
@@ -234,6 +235,11 @@ test("GitHub API strategy needs no branch protection while preserving exact live
             checkWrites.push("completed");
           },
         }),
+        createCommentGateway: () => ({
+          upsert: async (input) => {
+            commentReasons.push(input.eligibilityReason);
+          },
+        }),
       },
       new FixtureEvidenceHarness(safeFixture()),
       ledger,
@@ -243,11 +249,13 @@ test("GitHub API strategy needs no branch protection while preserving exact live
     assert.equal(result.state, "merged");
     assert.equal(mergeGateway.mergeCalls, 1);
     assert.deepEqual(checkWrites, ["created", "completed"]);
+    assert.deepEqual(commentReasons, ["Merged by MergeProof fixture gateway."]);
     assert.deepEqual(tokens.requests.map((request) => request.permissions), [
       { contents: "read", pull_requests: "read", checks: "read" },
       { contents: "read", pull_requests: "read", checks: "read" },
       { checks: "write" },
       { contents: "write", pull_requests: "read", checks: "read" },
+      { pull_requests: "write" },
     ]);
   } finally {
     ledger.close();
