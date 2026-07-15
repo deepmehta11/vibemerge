@@ -1,0 +1,65 @@
+{
+  "version": "vibemerge-fixture-harness-v1",
+  "checks": [
+    {
+      "id": "fixture-ci",
+      "kind": "deterministic_gate",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["fixture-ci"],
+      "detail": "The fixture's trusted source contract is present."
+    },
+    {
+      "id": "issue-reproduction",
+      "kind": "bug_reproduction",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["issue-reproduction"],
+      "detail": "A percentage discount must fail on the base and pass on the candidate."
+    },
+    {
+      "id": "checkout-invariants",
+      "kind": "protected_behavior",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["checkout-invariants"],
+      "detail": "Zero discount and full discount checkout invariants hold."
+    },
+    {
+      "id": "duplicate-race",
+      "kind": "adversarial",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["duplicate-race"],
+      "detail": "Repeated discount evaluation remains deterministic."
+    },
+    {
+      "id": "changed-hunks",
+      "kind": "hunk_closure",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["changed-hunks"],
+      "detail": "The trusted regression target observes the changed discount behavior."
+    }
+  ],
+  "metrics": [
+    {
+      "name": "p95_latency_ms",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["p95-latency"],
+      "detail": "Fixture latency sentinel measured by a trusted deterministic probe.",
+      "timeoutMs": 5000,
+      "workloadProfile": { "repetitions": 5, "aggregation": "max" }
+    },
+    {
+      "name": "peak_memory_mb",
+      "required": true,
+      "probe": "vibemerge-fixture-probe.mjs",
+      "args": ["peak-memory"],
+      "detail": "Fixture memory sentinel measured by a trusted deterministic probe.",
+      "timeoutMs": 5000,
+      "workloadProfile": { "repetitions": 5, "aggregation": "max" }
+    }
+  ]
+}

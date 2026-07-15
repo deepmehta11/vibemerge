@@ -1,0 +1,29 @@
+{
+  "allowedRepositories": ["deepmehta11/vibemerge-fixture"],
+  "autoMergeEnabled": false,
+  "mergeStrategy": "merge_queue",
+  "verification": {
+    "version": "vibemerge-fixture-v1",
+    "requiredCheckIds": [
+      "fixture-ci",
+      "issue-reproduction",
+      "checkout-invariants",
+      "duplicate-race",
+      "changed-hunks"
+    ],
+    "requiredMetricNames": ["p95_latency_ms", "peak_memory_mb"],
+    "requireBugReproduction": true,
+    "requireAdversarialChecks": true,
+    "requireHunkClosure": true,
+    "metricThresholds": {
+      "p95_latency_ms": { "maxRatio": 1.25, "maxAbsolute": 50 },
+      "peak_memory_mb": { "maxRatio": 1.25, "maxAbsolute": 64 }
+    }
+  },
+  "merge": {
+    "requiredApprovals": 0,
+    "requiredLabels": [],
+    "requiredChecks": ["fixture / ci"],
+    "mergeMethod": "squash"
+  }
+}
