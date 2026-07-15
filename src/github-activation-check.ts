@@ -22,7 +22,7 @@ function positiveInteger(value: string, name: string): number {
 const env = process.env;
 const appId = positiveInteger(required(env, "GITHUB_APP_ID"), "GITHUB_APP_ID");
 // The activation check intentionally reads the same maintainer-owned policy as
-// the service. It needs only the policy's required CI names and source App ids;
+// the service. Queue activation needs only required CI names and source App ids;
 // it does not instantiate the runtime, open a port, or make any GitHub write.
 const policy = loadControllerPolicy(required(env, "MERGEPROOF_POLICY_PATH"));
 const result = await verifyGitHubActivation(

@@ -15,7 +15,7 @@ export interface GitHubActivationCheckInput {
   installationId: number;
   repository: string;
   branch: string;
-  /** Every CI Check Run that production policy requires before queueing. */
+  /** Every CI Check Run that queue policy requires before queueing. */
   requiredChecks: readonly SourcePinnedCheck[];
   requiredEvidenceCheck: { name: string; appId: number };
 }
@@ -34,8 +34,8 @@ const activationReadPermissions: Record<string, GitHubPermission> = {
 };
 
 /**
- * Converts the production merge policy into the exact source-pinned CI
- * requirements that branch protection must enforce. This deliberately refuses
+ * Converts a merge-queue policy into the exact source-pinned CI requirements
+ * that branch protection must enforce. This deliberately refuses
  * an unpinned requirement instead of treating a same-named legacy status or
  * Check Run from an arbitrary App as equivalent.
  */
@@ -87,8 +87,9 @@ function validateSourcePinnedChecks(
 
 /**
  * Read-only activation check. It proves that this installation can read the
- * target branch's required CI checks and final MergeProof check are all
- * source-pinned to their policy-selected Apps. It deliberately cannot enqueue,
+ * target branch's queue-required CI checks and final MergeProof check are all
+ * source-pinned to their policy-selected Apps. GitHub API mode does not need
+ * this branch-protection check. The command deliberately cannot enqueue,
  * publish a Check Run, label, comment, or merge anything.
  */
 export async function verifyGitHubActivation(

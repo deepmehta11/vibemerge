@@ -101,7 +101,7 @@ test("runtime rejects an incomplete or malformed policy", () => {
   );
 });
 
-test("runtime requires source-pinned required checks before enabling protected automation", () => {
+test("runtime requires source-pinned required checks before enabling production automation", () => {
   assert.throws(
     () =>
       assertRuntimePolicySafe(parseControllerPolicy({

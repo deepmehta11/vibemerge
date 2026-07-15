@@ -286,7 +286,7 @@ export function assertRuntimePolicySafe(
     policy.merge.requiredChecks.includes(policy.requiredEvidenceCheck.name)
   ) {
     throw new Error(
-      "MergeProof / evidence is a final merge-group gate and must not be listed in merge.requiredChecks; doing so would wait for a Check Run that is only published after verification.",
+      "MergeProof / evidence is a final post-verification gate and must not be listed in merge.requiredChecks; doing so would wait for a Check Run that is only published after verification.",
     );
   }
   if (policy.autoMergeEnabled && policy.mergeStrategy === "direct_fixture") {

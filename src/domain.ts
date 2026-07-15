@@ -281,7 +281,7 @@ export interface LivePullRequest {
   state: "open" | "closed";
   draft: boolean;
   baseSha: string;
-  /** The base branch name is used only to verify its live merge protection. */
+  /** Queue mode uses the base branch name to verify its live merge protection. */
   baseRef?: string;
   headSha: string;
   mergeSha: string | null;
