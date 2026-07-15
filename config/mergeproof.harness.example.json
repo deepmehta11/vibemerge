@@ -1,0 +1,71 @@
+{
+  "version": "mergeproof-harness-v1",
+  "checks": [
+    {
+      "id": "ci",
+      "kind": "deterministic_gate",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["ci"],
+      "detail": "Repository test suite passes."
+    },
+    {
+      "id": "issue-reproduction",
+      "kind": "bug_reproduction",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["issue-reproduction"],
+      "detail": "The reported bug must fail on base and pass on the candidate."
+    },
+    {
+      "id": "checkout-invariants",
+      "kind": "protected_behavior",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["checkout-invariants"],
+      "detail": "Existing checkout invariants hold in both revisions."
+    },
+    {
+      "id": "duplicate-race",
+      "kind": "adversarial",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["duplicate-race"],
+      "detail": "Parallel duplicate requests settle at most one payment."
+    },
+    {
+      "id": "changed-hunks",
+      "kind": "hunk_closure",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["changed-hunks"],
+      "detail": "Every high-risk changed hunk has an observed regression check."
+    }
+  ],
+  "metrics": [
+    {
+      "name": "p95_latency_ms",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["p95-latency"],
+      "detail": "P95 latency printed as one numeric millisecond value.",
+      "timeoutMs": 60000,
+      "workloadProfile": {
+        "repetitions": 5,
+        "aggregation": "max"
+      }
+    },
+    {
+      "name": "peak_memory_mb",
+      "required": true,
+      "probe": "fail-closed.mjs",
+      "args": ["peak-memory"],
+      "detail": "Peak memory printed as one numeric megabyte value.",
+      "timeoutMs": 60000,
+      "workloadProfile": {
+        "repetitions": 5,
+        "aggregation": "max"
+      }
+    }
+  ]
+}

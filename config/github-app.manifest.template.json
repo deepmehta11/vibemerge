@@ -1,0 +1,19 @@
+{
+  "name": "MergeProof",
+  "description": "Evidence-first, merge-queue-native automatic pull request merging.",
+  "url": "https://YOUR_DEPLOYMENT_HOST",
+  "hook_attributes": {
+    "url": "https://YOUR_DEPLOYMENT_HOST/webhooks/github",
+    "active": true
+  },
+  "public": false,
+  "default_permissions": {
+    "administration": "read",
+    "checks": "write",
+    "contents": "read",
+    "issues": "write",
+    "merge_queues": "read",
+    "pull_requests": "write"
+  },
+  "default_events": ["pull_request", "pull_request_review", "issues", "check_run", "merge_group"]
+}
