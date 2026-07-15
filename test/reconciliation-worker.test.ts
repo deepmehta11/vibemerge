@@ -12,7 +12,7 @@ import { VerificationEngine } from "../src/verifier.js";
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-test("queue recovery waits for the original publisher lease, then atomically records an exact queued observation", async () => {
+test("queue recovery is not admitted while the original publisher lease is active", async () => {
   const ledger = new RunLedger();
   try {
     const revision = { ...demoRevision, headSha: "reconciler-head", mergeSha: "reconciler-merge" };
@@ -52,12 +52,9 @@ test("queue recovery waits for the original publisher lease, then atomically rec
     };
     let now = 20;
     const worker = new ReconciliationWorker(ledger, reader, "reconciler", () => now);
-    assert.deepEqual(await worker.processNext(), {
-      state: "ambiguous",
-      operationId: "merge_queue_enqueue:run-42",
-    });
-    assert.equal(observations, 1);
-    assert.equal(ledger.getExternalOperation("merge_queue_enqueue:run-42")?.state, "ambiguous");
+    assert.deepEqual(await worker.processNext(), { state: "idle" });
+    assert.equal(observations, 0);
+    assert.equal(ledger.getExternalOperation("merge_queue_enqueue:run-42")?.state, "intent_recorded");
     assert.equal(ledger.getByRunKey(claim.lease.runKey)?.status, "publishing");
 
     now = 100_000;
@@ -65,7 +62,7 @@ test("queue recovery waits for the original publisher lease, then atomically rec
       state: "observed_applied",
       operationId: "merge_queue_enqueue:run-42",
     });
-    assert.equal(observations, 2);
+    assert.equal(observations, 1);
     assert.equal(ledger.getExternalOperation("merge_queue_enqueue:run-42")?.state, "observed_applied");
     assert.deepEqual(
       {
@@ -80,7 +77,7 @@ test("queue recovery waits for the original publisher lease, then atomically rec
   }
 });
 
-test("direct-fixture recovery finalizes exact merged and not-merged observations only after publisher expiry", async () => {
+test("direct-fixture recovery is not admitted until publisher expiry", async () => {
   for (const scenario of [
     {
       remoteState: "merged" as const,
@@ -168,13 +165,13 @@ test("direct-fixture recovery finalizes exact merged and not-merged observations
       let now = 20;
       const worker = new ReconciliationWorker(ledger, reader, "reconciler", () => now);
 
-      assert.deepEqual(await worker.processNext(), { state: "ambiguous", operationId });
+      assert.deepEqual(await worker.processNext(), { state: "idle" });
       assert.deepEqual(
         {
           operation: ledger.getExternalOperation(operationId)?.state,
           status: ledger.getByRunKey(receipt.runKey)?.status,
         },
-        { operation: "ambiguous", status: scenario.initialRunStatus },
+        { operation: "intent_recorded", status: scenario.initialRunStatus },
       );
 
       now = 100_000;
@@ -257,11 +254,9 @@ test("an interrupted exact Check Run is failed closed only after its publisher l
     let now = 20;
     const worker = new ReconciliationWorker(ledger, reader, "reconciler", () => now, 3_000, closer);
 
-    assert.deepEqual(await worker.processNext(), {
-      state: "ambiguous",
-      operationId,
-    });
+    assert.deepEqual(await worker.processNext(), { state: "idle" });
     assert.deepEqual(recovered, []);
+    assert.equal(ledger.getExternalOperation(operationId)?.state, "intent_recorded");
 
     now = 100_000;
     assert.deepEqual(await worker.processNext(), {
@@ -525,7 +520,7 @@ test("a slow reconciliation read keeps its fenced lease alive and blocks a secon
         throw new Error("Unexpected Check Run observation.");
       },
     };
-    let now = 20;
+    let now = 60_011;
     const worker = new ReconciliationWorker(
       ledger,
       reader,
@@ -539,15 +534,15 @@ test("a slow reconciliation read keeps its fenced lease alive and blocks a secon
     while (!readStarted) {
       await delay(1);
     }
-    now = 2_000;
+    now = 62_000;
     await delay(5);
-    // The original lease ended at 3020. The heartbeat extended it from the
-    // slow read, so a second slot cannot steal it at 3021.
-    now = 3_021;
+    // The reconciliation lease initially ended at 63011. The heartbeat
+    // extended it from the slow read, so a second slot cannot steal it at 64001.
+    now = 64_001;
     assert.equal(ledger.claimReconciliationCandidate("reconciler:slot:2", 3_000, now), null);
     assert.ok(releaseRead);
     releaseRead?.();
-    assert.deepEqual(await running, { state: "ambiguous", operationId });
+    assert.deepEqual(await running, { state: "observed_applied", operationId });
   } finally {
     ledger.close();
   }
@@ -597,7 +592,7 @@ test("a lost reconciliation lease discards a slow read instead of running a fina
         throw new Error("Unexpected Check Run observation.");
       },
     };
-    let now = 20;
+    let now = 60_011;
     const worker = new ReconciliationWorker(
       ledger,
       reader,
@@ -614,9 +609,9 @@ test("a lost reconciliation lease discards a slow read instead of running a fina
     // Jump beyond the unrenewed lease before the timer gets a chance to
     // heartbeat. The heartbeat records ownership loss and the second slot
     // gets the only valid fence token.
-    now = 4_000;
+    now = 64_000;
     await delay(5);
-    assert.ok(ledger.claimReconciliationCandidate("reconciler:slot:2", 3_000, 4_001));
+    assert.ok(ledger.claimReconciliationCandidate("reconciler:slot:2", 3_000, 64_001));
     assert.ok(releaseRead);
     releaseRead?.();
     await assert.rejects(running, /stale or owned by another worker/i);

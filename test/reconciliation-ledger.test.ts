@@ -126,7 +126,11 @@ test("external operation intent survives a ledger reopen before any external wri
     try {
       assert.equal(reopened.getExternalOperation("queue-intent-42")?.state, "intent_recorded");
       assert.equal(reopened.getExternalOperation("queue-intent-42")?.installationId, 123_456);
-      assert.equal(reopened.claimReconciliationCandidate("reconciler-restart", 3_000, 20)?.operation.operationId, "queue-intent-42");
+      assert.equal(reopened.claimReconciliationCandidate("reconciler-restart", 3_000, 20), null);
+      assert.equal(
+        reopened.claimReconciliationCandidate("reconciler-restart", 3_000, 60_011)?.operation.operationId,
+        "queue-intent-42",
+      );
     } finally {
       reopened.close();
     }
@@ -141,44 +145,78 @@ test("reconciliation candidates are fenced, delayed after ambiguity, and finaliz
     const { lease, revision } = await publishingRun(ledger);
     ledger.prepareExternalOperation(lease, queueIntent(revision), 13);
 
-    const first = ledger.claimReconciliationCandidate("reconciler-a", 3_000, 20);
+    assert.equal(ledger.claimReconciliationCandidate("reconciler-a", 3_000, 20), null);
+
+    const first = ledger.claimReconciliationCandidate("reconciler-a", 3_000, 60_011);
     assert.ok(first);
     if (!first) return;
     assert.equal(first.lease.fenceToken, 1);
-    assert.equal(ledger.claimReconciliationCandidate("reconciler-b", 3_000, 21), null);
+    assert.equal(ledger.claimReconciliationCandidate("reconciler-b", 3_000, 60_012), null);
 
-    ledger.renewReconciliationLease(first.lease, 3_000, 1_000);
+    ledger.renewReconciliationLease(first.lease, 3_000, 61_000);
     assert.throws(
       () => ledger.resolveReconciliationCandidate(first.lease, {
         state: "observed_applied",
         evidence: "Exact queue entry was observed.",
-      }, 4_001),
+      }, 64_001),
       /stale/i,
     );
 
-    const second = ledger.claimReconciliationCandidate("reconciler-b", 3_000, 4_001);
+    const second = ledger.claimReconciliationCandidate("reconciler-b", 3_000, 64_001);
     assert.ok(second);
     if (!second) return;
     assert.equal(second.lease.fenceToken, 2);
     const ambiguous = ledger.resolveReconciliationCandidate(
       second.lease,
       { state: "ambiguous", evidence: "GitHub read API was temporarily unavailable.", retryAfterMs: 1_000 },
-      4_002,
+      64_002,
     );
     assert.equal(ambiguous.state, "ambiguous");
-    assert.equal(ledger.claimReconciliationCandidate("reconciler-c", 3_000, 5_001), null);
+    assert.equal(ledger.claimReconciliationCandidate("reconciler-c", 3_000, 65_001), null);
 
-    const third = ledger.claimReconciliationCandidate("reconciler-c", 3_000, 5_002);
+    const third = ledger.claimReconciliationCandidate("reconciler-c", 3_000, 65_002);
     assert.ok(third);
     if (!third) return;
     const applied = ledger.resolveReconciliationCandidate(
       third.lease,
       { state: "observed_applied", evidence: "Exact queue entry was observed." },
-      5_003,
+      65_003,
     );
     assert.equal(applied.state, "observed_applied");
-    assert.equal(applied.resolvedAt, 5_003);
-    assert.equal(ledger.claimReconciliationCandidate("reconciler-d", 3_000, 6_000), null);
+    assert.equal(applied.resolvedAt, 65_003);
+    assert.equal(ledger.claimReconciliationCandidate("reconciler-d", 3_000, 66_000), null);
+  } finally {
+    ledger.close();
+  }
+});
+
+test("an active Check Run publisher can acknowledge GitHub before reconciliation is admitted", async () => {
+  const ledger = new RunLedger();
+  try {
+    const { lease, revision } = await publishingRun(ledger);
+    const operationId = "check_run_publish:active-publisher";
+    ledger.prepareExternalOperation(lease, {
+      operationId,
+      kind: "check_run_publish",
+      installationId: 123_456,
+      target: {
+        repository: revision.repository,
+        pullRequest: revision.pullRequest,
+        expectedHeadSha: revision.headSha,
+        checkName: "MergeProof / evidence",
+      },
+      expectation: {
+        checkRunExternalId: operationId,
+        expectedCheckConclusion: "failure",
+      },
+    }, 13);
+    ledger.bindCheckRunToOperation(lease, operationId, 7, 14);
+
+    assert.equal(ledger.claimReconciliationCandidate("reconciler", 3_000, 20), null);
+    assert.equal(
+      ledger.confirmCheckRunCompletion(lease, operationId, 7, 21).state,
+      "observed_applied",
+    );
   } finally {
     ledger.close();
   }

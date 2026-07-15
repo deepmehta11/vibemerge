@@ -1616,14 +1616,36 @@ export class RunLedger {
     return this.transaction(() => {
       const row = this.database
         .prepare(`
-          SELECT * FROM external_operations
-          WHERE state IN ('intent_recorded', 'ambiguous')
-            AND next_reconcile_at <= ?
-            AND (reconciliation_lease_until IS NULL OR reconciliation_lease_until < ?)
-          ORDER BY next_reconcile_at ASC, created_at ASC, operation_id ASC
+          SELECT external_operations.* FROM external_operations
+          LEFT JOIN runs ON runs.run_key = external_operations.run_key
+          WHERE external_operations.state IN ('intent_recorded', 'ambiguous')
+            AND external_operations.next_reconcile_at <= ?
+            AND (
+              external_operations.reconciliation_lease_until IS NULL
+              OR external_operations.reconciliation_lease_until < ?
+            )
+            -- An intent is written immediately before a GitHub side effect.
+            -- Do not let a reconciler mutate that intent while its original
+            -- publisher still has a valid lease to acknowledge the response.
+            AND NOT (
+              runs.run_key IS NOT NULL
+              AND runs.lease_until IS NOT NULL
+              AND runs.lease_until >= ?
+              AND (
+                (external_operations.kind IN ('check_run_publish', 'merge_queue_enqueue')
+                  AND runs.status = 'publishing')
+                OR (
+                  external_operations.kind = 'direct_merge'
+                  AND runs.status IN ('merging', 'merge_unknown')
+                )
+              )
+            )
+          ORDER BY external_operations.next_reconcile_at ASC,
+                   external_operations.created_at ASC,
+                   external_operations.operation_id ASC
           LIMIT 1
         `)
-        .get(now, now) as ExternalOperationRow | undefined;
+        .get(now, now, now) as ExternalOperationRow | undefined;
       if (!row) {
         return null;
       }
