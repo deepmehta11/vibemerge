@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { sealReceipt } from "../src/crypto.js";
 import { demoRevision, demoVerificationPolicy, safeFixture } from "../src/fixtures.js";
 import { FixtureEvidenceHarness } from "../src/harness.js";
 import { RunLedger } from "../src/ledger.js";
@@ -38,7 +39,8 @@ test("operator receipt projection excludes sandbox, model, and candidate-command
       ],
       challenges: [],
     };
-    ledger.recordReceipt(claim.lease, receipt, 11);
+    const { integrityHash: _oldIntegrityHash, ...unsignedReceipt } = receipt;
+    ledger.recordReceipt(claim.lease, sealReceipt(unsignedReceipt), 11);
     const run = ledger.get(demoRevision);
     assert.ok(run);
     if (!run) return;

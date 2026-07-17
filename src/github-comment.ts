@@ -57,6 +57,29 @@ function renderMetrics(receipt: EvidenceReceipt): string {
   return rows || "No paired metrics were emitted.";
 }
 
+function renderClaimProof(receipt: EvidenceReceipt): string {
+  const proof = receipt.claimProof;
+  if (!proof) {
+    return "Generated claim-to-proof evidence was not enabled for this receipt.";
+  }
+  const phaseObservation = (phase: keyof typeof proof.phases, id: string): string =>
+    proof.phases[phase].experiments.find((experiment) => experiment.id === id)?.observed ?? "missing";
+  const ids = [...new Set(
+    Object.values(proof.phases).flatMap((phase) => phase.experiments.map(({ id }) => id)),
+  )].sort();
+  const rows = ids.slice(0, 30).map((id) =>
+    `| ${safeText(id, 100)} | ${phaseObservation("base", id)} | ${phaseObservation("candidate", id)} | ${phaseObservation("ablation", id)} |`,
+  ).join("\n");
+  return `**Deterministic judgment:** \`${proof.judgment.decision}\`<br>
+**Causal fingerprint:** base → PR candidate → fix removed<br>
+**Plan:** \`${proof.proofPlanDigest}\`<br>
+**Evidence identity:** \`${proof.evidenceIdentity}\`
+
+| Generated experiment | Base | PR candidate | Fix removed |
+| --- | --- | --- | --- |
+${rows || "| No generated observations | missing | missing | missing |"}`;
+}
+
 function renderAdvisory(receipt: EvidenceReceipt): string {
   if (receipt.agentAnalysis.status !== "completed") {
     return "Agent analysis was unavailable or not configured; it did not affect this verdict.";
@@ -120,6 +143,13 @@ export function renderEvidenceComment(receipt: EvidenceReceipt, eligibilityReaso
 ${eligibilityReason ? `**Automatic merge gate:** ${safeText(eligibilityReason)}\n` : ""}
 
 ${reasons || "All configured deterministic obligations passed."}
+
+<details open>
+<summary>Claim-to-proof causal evidence</summary>
+
+${renderClaimProof(receipt)}
+
+</details>
 
 <details>
 <summary>Observed deterministic checks</summary>

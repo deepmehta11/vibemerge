@@ -183,7 +183,7 @@ test("runtime injects the mounted artifact digest into its controller policy ide
       assert.equal(runtime.reconcilers.length, 3);
       assert.equal(new Set(runtime.reconcilers.map((worker) => worker.workerId)).size, 3);
     } finally {
-      runtime.ledger.close();
+      runtime.close();
     }
   } finally {
     if (previousOpenAiKey === undefined) {

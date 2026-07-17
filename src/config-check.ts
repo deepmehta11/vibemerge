@@ -14,5 +14,5 @@ try {
   );
 } finally {
   runtime.setReady(false);
-  runtime.ledger.close();
+  runtime.close();
 }

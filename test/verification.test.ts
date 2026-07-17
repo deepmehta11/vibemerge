@@ -88,4 +88,6 @@ test("a receipt changed after sealing fails integrity verification", async () =>
   receipt.verdict = "BLOCK";
 
   assert.equal(verifyReceipt(receipt), false);
+  receipt.integrityHash = "not-a-digest";
+  assert.equal(verifyReceipt(receipt), false);
 });

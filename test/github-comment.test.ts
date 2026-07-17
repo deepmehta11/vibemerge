@@ -65,6 +65,44 @@ test("evidence comment renders sealed Issue-to-Proof observations without publis
   assert.doesNotMatch(rendered, /Fix duplicate settlement|must-not-render|Model assertion|candidate command output|sealed-digest/);
 });
 
+test("evidence comment renders the base to candidate to fix-removed causal fingerprint", async () => {
+  const value = await receipt();
+  const phase = (observed: "pass" | "fail") => ({
+    proofPlanDigest: "a".repeat(64),
+    experiments: [{
+      id: "primary-retry",
+      kind: "primary" as const,
+      observed,
+      assertions: 2,
+      failedAssertionIds: observed === "fail" ? ["duplicate"] : [],
+      artifactDigest: "b".repeat(64),
+    }],
+  });
+  value.claimProof = {
+    schemaVersion: 1,
+    analysisKey: "c".repeat(64),
+    evidenceIdentity: "d".repeat(64),
+    claimContractDigest: "e".repeat(64),
+    impactMapDigest: "f".repeat(64),
+    proofPlanDigest: "a".repeat(64),
+    replayProfileDigest: "1".repeat(64),
+    phases: { base: phase("fail"), candidate: phase("pass"), ablation: phase("fail") },
+    targetCoverage: { "primary-retry": ["hunk:jobs.py:1"] },
+    judgment: {
+      decision: "MERGE",
+      reasons: [],
+      satisfiedExperimentIds: ["primary-retry"],
+      uncoveredImpactTargetIds: [],
+    },
+  };
+
+  const rendered = renderEvidenceComment(value);
+  assert.match(rendered, /Claim-to-proof causal evidence/);
+  assert.match(rendered, /base → PR candidate → fix removed/i);
+  assert.match(rendered, /primary-retry \| fail \| pass \| fail/);
+  assert.match(rendered, /Deterministic judgment.*MERGE/s);
+});
+
 test("comment upsert edits only the current GitHub App's managed comment", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const responses = [

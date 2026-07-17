@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-import { revisionRunKey } from "./crypto.js";
+import { revisionRunKey, verifyReceipt } from "./crypto.js";
 import type {
   EvidenceReceipt,
   MergeAttempt,
@@ -772,7 +772,11 @@ export class RunLedger {
   }
 
   recordReceipt(lease: RunLease, receipt: EvidenceReceipt, now = Date.now()): void {
-    if (lease.runKey !== receipt.runKey) {
+    if (
+      !verifyReceipt(receipt) ||
+      lease.runKey !== receipt.runKey ||
+      revisionRunKey(receipt.revision) !== receipt.runKey
+    ) {
       throw new Error("Receipt belongs to a different exact revision.");
     }
     const outcome: MergeOutcome =

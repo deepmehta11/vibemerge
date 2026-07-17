@@ -1,9 +1,14 @@
-import { lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 
 import { z } from "zod";
 
 import { OpenAIProofPlanner } from "./agent-planner.js";
+import {
+  claimAuthorityReferenceSchema,
+  OpenAIClaimCompilerProvider,
+} from "./claim-compiler.js";
+import { ClaimProofCoordinator } from "./claim-proof-coordinator.js";
 import { GitHubCheckRunFailureCloser, GitHubCheckRunGateway } from "./check-run.js";
 import type { MergeProofControllerPolicy } from "./controller.js";
 import { MergeProofController } from "./controller.js";
@@ -13,6 +18,9 @@ import { GitHubPullRequestCommentGateway } from "./github-comment.js";
 import { GitHubRestGateway } from "./github-gateway.js";
 import { GitHubRestSourceArchiveProvider } from "./github-source.js";
 import { RunLedger } from "./ledger.js";
+import { ProofPlanStore } from "./proof-plan-store.js";
+import { parseTrustedReplayProfile } from "./replay-profile.js";
+import { GitHubRestRepositorySnapshotProvider } from "./repository-snapshot.js";
 import { MergeGroupController } from "./merge-group-controller.js";
 import { GitHubMergeQueueGateway } from "./merge-queue.js";
 import { deriveTrustedHarnessBudget, type TrustedHarnessBudget } from "./harness-budget.js";
@@ -132,6 +140,8 @@ export interface MergeProofRuntime {
   verificationLeaseMs: number;
   port: number;
   setReady(ready: boolean): void;
+  /** Closes every durable SQLite handle owned by this runtime. */
+  close(): void;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -159,6 +169,55 @@ function operatorToken(env: NodeJS.ProcessEnv): string | undefined {
     throw new Error("MERGEPROOF_OPERATOR_TOKEN must contain at least 24 characters.");
   }
   return token;
+}
+
+function claimProofConfiguration(
+  env: NodeJS.ProcessEnv,
+  databasePath: string,
+): {
+  configuration?: import("./controller.js").ClaimProofControllerConfiguration;
+  store?: ProofPlanStore;
+} {
+  if (env.MERGEPROOF_CLAIM_PROOF_ENABLED !== "true") {
+    if (env.MERGEPROOF_CLAIM_PROOF_ENABLED && env.MERGEPROOF_CLAIM_PROOF_ENABLED !== "false") {
+      throw new Error("MERGEPROOF_CLAIM_PROOF_ENABLED must be true or false.");
+    }
+    return {};
+  }
+  const profile = parseTrustedReplayProfile(
+    JSON.parse(readFileSync(required(env, "MERGEPROOF_CLAIM_PROOF_REPLAY_PROFILE_PATH"), "utf8")),
+  );
+  const authorities = z.array(claimAuthorityReferenceSchema).min(1).max(100).parse(
+    JSON.parse(readFileSync(required(env, "MERGEPROOF_CLAIM_PROOF_AUTHORITIES_PATH"), "utf8")),
+  );
+  const baseContractDigest = required(env, "MERGEPROOF_CLAIM_PROOF_BASE_CONTRACT_DIGEST");
+  if (!/^[a-f0-9]{64}$/.test(baseContractDigest)) {
+    throw new Error("MERGEPROOF_CLAIM_PROOF_BASE_CONTRACT_DIGEST must be a lowercase SHA-256 digest.");
+  }
+  const model = env.MERGEPROOF_CLAIM_COMPILER_MODEL ?? "gpt-5.4";
+  const store = new ProofPlanStore(databasePath);
+  const coordinator = new ClaimProofCoordinator({
+    proofPlanStore: store,
+    claimCompilerProvider: new OpenAIClaimCompilerProvider({ model }),
+    repositorySnapshotProvider: new GitHubRestRepositorySnapshotProvider(),
+  });
+  return {
+    store,
+    configuration: {
+      coordinator,
+      replayProfile: profile,
+      trustedAuthorityReferences: authorities,
+      baseContractDigest,
+      compiler: { model, schemaVersion: 1, toolVersion: "claim-compiler-v1" },
+      workerId: `claim-planner:${process.pid}`,
+      planningLeaseMs: boundedPositiveInteger(
+        env,
+        "MERGEPROOF_CLAIM_PROOF_PLANNING_LEASE_MS",
+        10 * 60_000,
+        60 * 60_000,
+      ),
+    },
+  };
 }
 
 function boundedPositiveInteger(
@@ -250,8 +309,14 @@ export function loadTrustedArtifactBundle(input: {
   const template = assertImmutableE2BTemplate(input.template);
   const harnessSpec = readFileSync(resolve(input.harnessSpecPath));
   const harnessBudget = deriveTrustedHarnessBudget(harnessSpec);
+  const trustedHarnessPath = resolve(input.trustedHarnessPath);
+  const siblingReverseDiffPath = resolve(dirname(trustedHarnessPath), "reverse-unified-diff.mjs");
+  const reverseDiffPath = existsSync(siblingReverseDiffPath)
+    ? siblingReverseDiffPath
+    : resolve("harness/reverse-unified-diff.mjs");
   const workspaceFiles: Record<string, TrustedWorkspaceFile> = {
-    "/workspace/mergeproof-harness.mjs": readFileSync(resolve(input.trustedHarnessPath)),
+    "/workspace/mergeproof-harness.mjs": readFileSync(trustedHarnessPath),
+    "/workspace/reverse-unified-diff.mjs": readFileSync(reverseDiffPath),
     "/workspace/mergeproof-harness.json": harnessSpec,
     ...loadTrustedProbeFiles(input.trustedProbeDirectory),
   };
@@ -354,6 +419,21 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): MergeProofR
     boundedPositiveInteger(env, "MERGEPROOF_MAX_PENDING_WEBHOOK_EVENTS", 10_000, 1_000_000),
     boundedPositiveInteger(env, "MERGEPROOF_MAX_PENDING_WEBHOOK_BYTES", 256 * 1024 * 1024, 10 * 1024 * 1024 * 1024),
   );
+  const claimProof = claimProofConfiguration(env, databasePath);
+  if (policy.autoMergeEnabled && !claimProof.configuration) {
+    claimProof.store?.close();
+    ledger.close();
+    throw new Error(
+      "Automatic merge requires MERGEPROOF_CLAIM_PROOF_ENABLED=true and a complete trusted claim-proof configuration.",
+    );
+  }
+  if (policy.autoMergeEnabled && policy.mergeStrategy === "merge_queue") {
+    claimProof.store?.close();
+    ledger.close();
+    throw new Error(
+      "Generated claim-proof automatic merge currently supports github_api only; merge_queue participant-plan replay is not yet an automation authority.",
+    );
+  }
   const tokens = new GitHubAppInstallationTokenProvider(appId, privateKey);
   const reconcilers = Array.from(
     { length: configuredReconciliationConcurrency },
@@ -396,6 +476,7 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): MergeProofR
     () => new Date(),
     new OpenAIProofPlanner(),
     sourceHarness,
+    claimProof.configuration,
   );
   const mergeGroups = new MergeGroupController(
     policy,
@@ -453,6 +534,10 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): MergeProofR
     port: port(env.PORT),
     setReady: (nextReady) => {
       ready = nextReady;
+    },
+    close: () => {
+      claimProof.store?.close();
+      ledger.close();
     },
   };
 }

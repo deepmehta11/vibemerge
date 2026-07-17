@@ -1,7 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+
+import { applyReverseUnifiedDiff } from "./reverse-unified-diff.mjs";
 
 const checkKinds = new Set([
   "deterministic_gate",
@@ -22,6 +25,26 @@ const maxWorkloadProfileBudgetMs = 5 * 60_000;
 const maxTotalProbeBudgetMs = 20 * 60_000;
 const trustedProbesDir = process.env.MERGEPROOF_TRUSTED_PROBES_DIR ?? "/workspace/probes";
 
+function trustedControllerInputPath(value, productionPath) {
+  if (value === productionPath) return value;
+  if (!value || !isAbsolute(value)) return undefined;
+  try {
+    const temporaryRoot = realpathSync(tmpdir());
+    const resolvedValue = realpathSync(value);
+    const fromTemporaryRoot = relative(temporaryRoot, resolvedValue);
+    if (
+      fromTemporaryRoot.length > 0 &&
+      !fromTemporaryRoot.startsWith("..") &&
+      !isAbsolute(fromTemporaryRoot)
+    ) {
+      return resolvedValue;
+    }
+  } catch {
+    // Missing inputs and symlink escapes are not trusted controller mounts.
+  }
+  return undefined;
+}
+
 /**
  * A probe runs controller-owned code against candidate source.  It must not
  * inherit the harness's whole environment: even though E2B has no egress,
@@ -39,6 +62,17 @@ function trustedProbeEnvironment(workload) {
     MERGEPROOF_SOURCE_DIR: undefined,
     MERGEPROOF_PHASE: process.env.MERGEPROOF_PHASE ?? "candidate",
   };
+  environment.MERGEPROOF_PROOF_PLAN_PATH = trustedControllerInputPath(
+    process.env.MERGEPROOF_PROOF_PLAN_PATH,
+    "/workspace/mergeproof-proof-plan.json",
+  );
+  environment.MERGEPROOF_REPLAY_PROFILE_PATH = trustedControllerInputPath(
+    process.env.MERGEPROOF_REPLAY_PROFILE_PATH,
+    "/workspace/mergeproof-replay-profile.json",
+  );
+  if (/^[a-f0-9]{64}$/.test(process.env.MERGEPROOF_PROOF_PLAN_DIGEST ?? "")) {
+    environment.MERGEPROOF_PROOF_PLAN_DIGEST = process.env.MERGEPROOF_PROOF_PLAN_DIGEST;
+  }
   if (workload) {
     environment.MERGEPROOF_WORKLOAD_ITERATION = String(workload.iteration);
     environment.MERGEPROOF_WORKLOAD_REPETITIONS = String(workload.repetitions);
@@ -205,11 +239,82 @@ function run(probe, args, cwd, timeoutMs, workload) {
     timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
   });
-  const output = clean(`${result.stdout ?? ""} ${result.stderr ?? ""}`);
+  const rawStdout = String(result.stdout ?? "");
+  const output = clean(`${rawStdout} ${result.stderr ?? ""}`);
   if (result.error) {
-    return { ok: false, output: clean(result.error.message) };
+    return { ok: false, output: clean(result.error.message), rawStdout: "" };
   }
-  return { ok: result.status === 0, output };
+  return { ok: result.status === 0, output, rawStdout };
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function generatedProof(cwd) {
+  const configuredPlanPath = process.env.MERGEPROOF_PROOF_PLAN_PATH;
+  const configuredReplayProfilePath = process.env.MERGEPROOF_REPLAY_PROFILE_PATH;
+  const digest = process.env.MERGEPROOF_PROOF_PLAN_DIGEST;
+  if (!configuredPlanPath && !configuredReplayProfilePath && !digest) return undefined;
+  const planPath = trustedControllerInputPath(
+    configuredPlanPath,
+    "/workspace/mergeproof-proof-plan.json",
+  );
+  const replayProfilePath = trustedControllerInputPath(
+    configuredReplayProfilePath,
+    "/workspace/mergeproof-replay-profile.json",
+  );
+  if (!planPath || !replayProfilePath || !/^[a-f0-9]{64}$/.test(digest ?? "")) {
+    throw new Error("Generated proof identity is incomplete.");
+  }
+  const plan = assertObject(JSON.parse(readFileSync(planPath, "utf8")), "Generated proof plan");
+  if (plan.schemaVersion !== 1 || plan.status !== "ready") {
+    throw new Error("Generated proof plan is not ready.");
+  }
+  if (!Array.isArray(plan.experiments) || plan.experiments.length === 0 || plan.experiments.length > 64) {
+    throw new Error("Generated proof plan has an invalid experiment set.");
+  }
+  const descriptors = plan.experiments.map((raw, index) => {
+    const experiment = assertObject(raw, `experiments[${index}]`);
+    const id = assertString(experiment.id, `experiments[${index}].id`);
+    const kind = assertString(experiment.kind, `experiments[${index}].kind`);
+    if (!/^[a-z][a-z0-9_-]{0,159}$/.test(id) || !["primary", "positive_control", "negative_control"].includes(kind)) {
+      throw new Error(`experiments[${index}] identity is invalid.`);
+    }
+    return { id, kind };
+  });
+  if (new Set(descriptors.map(({ id }) => id)).size !== descriptors.length) {
+    throw new Error("Generated proof experiment identifiers must be unique.");
+  }
+  const experiments = descriptors.map(({ id, kind }) => {
+    const result = run("http-replay.mjs", [`experiment:${id}`], cwd, 60_000);
+    const marker = "MERGEPROOF_REPLAY=";
+    const markerIndex = result.rawStdout.indexOf(marker);
+    if (markerIndex < 0) {
+      return { id, kind, observed: "unsupported", assertions: 0, failedAssertionIds: [], artifactDigest: sha256(result.output) };
+    }
+    try {
+      const recordText = result.rawStdout.slice(markerIndex + marker.length).trim();
+      if (Buffer.byteLength(recordText, "utf8") > 65_536) throw new Error("record too large");
+      const record = assertObject(JSON.parse(recordText), "Replay observation");
+      if (!Array.isArray(record.experiments) || record.experiments.length !== 1) throw new Error("experiment count");
+      const observation = assertObject(record.experiments[0], "Replay experiment observation");
+      if (observation.id !== id || !["pass", "fail"].includes(observation.observed)) throw new Error("identity");
+      if (!Number.isSafeInteger(observation.assertions) || observation.assertions < 0 || observation.assertions > 24) throw new Error("assertions");
+      if (!Array.isArray(observation.failures) || observation.failures.length > 24 || observation.failures.some((value) => typeof value !== "string" || !/^[a-z][a-z0-9_-]{0,79}$/.test(value))) throw new Error("failures");
+      return {
+        id,
+        kind,
+        observed: observation.observed,
+        assertions: observation.assertions,
+        failedAssertionIds: [...observation.failures].sort(),
+        artifactDigest: sha256(recordText),
+      };
+    } catch {
+      return { id, kind, observed: "unsupported", assertions: 0, failedAssertionIds: [], artifactDigest: sha256(result.output) };
+    }
+  });
+  return { proofPlanDigest: digest, experiments };
 }
 
 function parseMetricValue(output) {
@@ -340,6 +445,11 @@ function main() {
   const spec = parseSpec(JSON.parse(readFileSync(specPath, "utf8")));
   const worktree = extractArchive(archive);
   try {
+    if (process.env.MERGEPROOF_PHASE === "ablation") {
+      const diffPath = process.env.MERGEPROOF_PR_DIFF_PATH;
+      if (!diffPath) throw new Error("Ablation phase is missing the sealed PR diff.");
+      applyReverseUnifiedDiff(worktree, readFileSync(diffPath, "utf8"));
+    }
     const checks = spec.checks.map((check) => {
       const result = run(check.probe, check.args, worktree, check.timeoutMs);
       return {
@@ -351,7 +461,8 @@ function main() {
       };
     });
     const metrics = spec.metrics.map((metric) => collectMetric(metric, worktree));
-    return { harnessVersion: spec.version, checks, metrics };
+    const proof = generatedProof(worktree);
+    return { harnessVersion: spec.version, checks, metrics, ...(proof ? { generatedProof: proof } : {}) };
   } finally {
     rmSync(worktree, { recursive: true, force: true });
   }

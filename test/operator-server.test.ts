@@ -61,6 +61,13 @@ test("operator endpoints require Basic auth and expose only safe, non-cacheable 
     assert.deepEqual(overviewBody.stats.runs.verified, 1);
     assert.equal(overviewBody.automation.paused, false);
 
+    const unauthorizedPause = await fetch(`${origin}/api/operator/v1/automation/pause`, {
+      method: "POST",
+      headers: { "x-mergeproof-operator-action": "pause" },
+    });
+    assert.equal(unauthorizedPause.status, 401);
+    assert.equal(ledger.automationControl().paused, false);
+
     const unconfirmedPause = await fetch(`${origin}/api/operator/v1/automation/pause`, {
       method: "POST",
       headers: operatorHeaders(),

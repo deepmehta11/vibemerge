@@ -67,11 +67,18 @@ export function sealReceipt(
 }
 
 export function verifyReceipt(receipt: EvidenceReceipt): boolean {
-  const { integrityHash, ...unsigned } = receipt;
-  return timingSafeEqual(
-    Buffer.from(integrityHash, "hex"),
-    Buffer.from(sha256(canonicalJson(unsigned)), "hex"),
-  );
+  try {
+    const { integrityHash, ...unsigned } = receipt;
+    if (!/^[a-f0-9]{64}$/.test(integrityHash)) {
+      return false;
+    }
+    return timingSafeEqual(
+      Buffer.from(integrityHash, "hex"),
+      Buffer.from(sha256(canonicalJson(unsigned)), "hex"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function githubWebhookSignature(body: string, secret: string): string {

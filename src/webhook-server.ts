@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { DurableWebhookInbox } from "./webhook.js";
 import { queueGitHubDelivery } from "./webhook.js";
 import { serveOperatorConsole, type OperatorConsoleConfig } from "./operator-server.js";
+import { claimProofDemoPage } from "./demo-page.js";
 
 export interface GitHubWebhookServerConfig {
   secret: string;
@@ -66,6 +67,16 @@ export function createGitHubWebhookServer(config: GitHubWebhookServerConfig): Se
     }
     if (request.method === "GET" && request.url === "/healthz") {
       reply(response, 200, { status: "ok", service: "mergeproof" });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/demo") {
+      response.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=300",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+        "x-content-type-options": "nosniff",
+      });
+      response.end(claimProofDemoPage());
       return;
     }
     if (request.method === "GET" && request.url === "/readyz") {

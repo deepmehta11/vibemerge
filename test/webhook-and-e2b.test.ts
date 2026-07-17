@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { githubWebhookSignature } from "../src/crypto.js";
+import { githubWebhookSignature, sealReceipt } from "../src/crypto.js";
 import { parseHarnessResult } from "../src/e2b-harness.js";
-import { RunLedger } from "../src/ledger.js";
 import type { EvidenceReceipt } from "../src/domain.js";
 import { demoRevision, demoVerificationPolicy, safeFixture } from "../src/fixtures.js";
 import { FixtureEvidenceHarness } from "../src/harness.js";
+import { RunLedger } from "../src/ledger.js";
 import { VerificationEngine } from "../src/verifier.js";
 import { acceptGitHubDelivery } from "../src/webhook.js";
 import { queueGitHubDelivery } from "../src/webhook.js";
@@ -154,7 +154,8 @@ test("a linked-issue edit re-evaluates only queued PRs sealed to that issue", as
       },
       scenarioBindings: [],
     };
-    ledger.recordReceipt(claim.lease, receipt, 11);
+    const { integrityHash: _oldIntegrityHash, ...unsignedReceipt } = receipt;
+    ledger.recordReceipt(claim.lease, sealReceipt(unsignedReceipt), 11);
     ledger.beginPublication(claim.lease, 12);
     ledger.markQueued(claim.lease, 13);
     const body = JSON.stringify({
