@@ -97,8 +97,8 @@ export class PlannerUnavailableError extends Error {
 /**
  * Structured output is advisory, but an interrupted JSON response should not
  * turn a transient transport/model-format failure into a flaky proof run.
- * Retry exactly once and only for parser failures; any second failure still
- * reaches the controller as unavailable and therefore fails closed.
+ * Retry at most twice and only for parser/schema failures; a third failure
+ * still reaches the controller as unavailable and therefore fails closed.
  */
 function structuredOutputRetryGuidance(message: string): string {
   if (message.includes("Expected a canonical lower-case identifier.")) {
@@ -106,6 +106,15 @@ function structuredOutputRetryGuidance(message: string): string {
       "The previous response used a non-canonical identifier. Every model-authored id and " +
       "every id reference must match the canonical lower-case identifier constraint. " +
       "Return one complete replacement object."
+    );
+  }
+  if (
+    message.includes("expectedBehaviors") &&
+    message.includes("expected string, received undefined")
+  ) {
+    return (
+      "The previous response omitted a required field. Every expected behavior must include " +
+      "non-empty id, when, and then fields. Return one complete replacement object."
     );
   }
   return (
@@ -119,12 +128,12 @@ export async function retryMalformedStructuredOutput<T>(
 ): Promise<T> {
   let firstError: unknown;
   let retryGuidance: string | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await operation(retryGuidance);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (attempt === 0 && /^Invalid output type:/.test(message)) {
+      if (attempt < 2 && /^Invalid output type:/.test(message)) {
         firstError = error;
         retryGuidance = structuredOutputRetryGuidance(message);
         continue;

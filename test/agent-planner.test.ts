@@ -42,7 +42,7 @@ const canonicalIssue: CanonicalGitHubIssue = {
   isPullRequest: false,
 };
 
-test("malformed advisory structured output receives one bounded retry", async () => {
+test("malformed advisory structured output receives at most two bounded retries", async () => {
   let calls = 0;
   const result = await retryMalformedStructuredOutput(async () => {
     calls += 1;
@@ -62,7 +62,7 @@ test("malformed advisory structured output receives one bounded retry", async ()
     }),
     /Invalid output type/,
   );
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
 });
 
 test("structured output retry supplies fixed schema guidance without echoing provider output", async () => {
@@ -83,6 +83,30 @@ test("structured output retry supplies fixed schema guidance without echoing pro
   assert.match(feedback[1] ?? "", /canonical lower-case identifier/);
   assert.doesNotMatch(feedback[1] ?? "", /attacker-controlled-value/);
   assert.ok((feedback[1] ?? "").length < 500);
+});
+
+test("structured output retry updates fixed guidance for a newly exposed missing field", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (feedback.length === 1) {
+      throw new Error(
+        'Invalid output type: final assistant output failed schema validation at "expectedBehaviors.0.id" ' +
+          "(Expected a canonical lower-case identifier.).",
+      );
+    }
+    if (feedback.length === 2) {
+      throw new Error(
+        'Invalid output type: final assistant output failed schema validation at "expectedBehaviors.0.then" ' +
+          "(Invalid input: expected string, received undefined).",
+      );
+    }
+    return "complete structured response";
+  });
+
+  assert.equal(result, "complete structured response");
+  assert.match(feedback[1] ?? "", /canonical lower-case identifier/);
+  assert.match(feedback[2] ?? "", /required field/);
 });
 
 function revisionForIssue(issue: CanonicalGitHubIssue = canonicalIssue): PinnedRevision {
