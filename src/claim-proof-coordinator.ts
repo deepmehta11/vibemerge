@@ -1,5 +1,6 @@
 import {
   CLAIM_COMPILER_SYSTEM_INSTRUCTIONS,
+  claimCompilerExecutionCatalog,
   compileClaimContract,
   sanitizeClaimCompilerInput,
   type ClaimAuthorityReference,
@@ -128,6 +129,8 @@ export class ClaimProofCoordinator {
 
   async prepare(input: PrepareClaimProofInput): Promise<PrepareClaimProofResult> {
     assertExactRevision(input);
+    const replayProfile = parseTrustedReplayProfile(input.replayProfile);
+    const trustedExecutionCatalog = claimCompilerExecutionCatalog(replayProfile);
     const sanitizedCompilerInput = sanitizeClaimCompilerInput({
       repository: input.repository,
       pullRequest: input.pullRequest,
@@ -136,8 +139,8 @@ export class ClaimProofCoordinator {
       title: input.title,
       description: input.description,
       trustedAuthorityReferences: input.trustedAuthorityReferences,
+      trustedExecutionCatalog,
     });
-    const replayProfile = parseTrustedReplayProfile(input.replayProfile);
     const replayProfileDigest = trustedReplayProfileDigest(replayProfile);
     const promptDigest = sha256(CLAIM_COMPILER_SYSTEM_INSTRUCTIONS);
     const boundTrustedArtifactDigest = sha256(
@@ -201,6 +204,7 @@ export class ClaimProofCoordinator {
       title: input.title,
       description: input.description,
       trustedAuthorityReferences: input.trustedAuthorityReferences,
+      trustedExecutionCatalog,
     });
     lease = this.dependencies.proofPlanStore.renew(lease, input.leaseMs, this.clock());
 

@@ -216,6 +216,8 @@ test("claims before model use, snapshots the exact merge SHA, seals evidence, an
     assert.equal(compilerInputs.length, 1);
     const serializedCompilerInput = JSON.stringify(compilerInputs[0]);
     assert.ok(serializedCompilerInput.includes(input.title));
+    assert.ok(serializedCompilerInput.includes("/jobs/job-42/retry"));
+    assert.ok(serializedCompilerInput.includes("empty"));
     assert.ok(!serializedCompilerInput.includes(input.githubReadToken));
     assert.ok(!serializedCompilerInput.includes("diff --git"));
 

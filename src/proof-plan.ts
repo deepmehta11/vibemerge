@@ -298,6 +298,7 @@ function impactTargets(impactMap: ImpactMap): ProofImpactTarget[] {
     });
   }
   for (const workflow of impactMap.workflows) {
+    if (workflow.kind === "test") continue;
     targets.push({
       id: workflow.id,
       path: workflow.path,
@@ -357,13 +358,14 @@ export function buildProofPlan(input: BuildProofPlanInput): CompiledProofPlan {
 
   const hasChangedSource = input.impactMap.diffFiles.some((file) =>
     file.classifications.includes("source") && file.hunks.length > 0);
+  const runtimeWorkflows = input.impactMap.workflows.filter(({ kind }) => kind !== "test");
   if (input.impactMap.diffFiles.some((file) => file.hunks.length > 0)) {
     limitations.push("hunk-closure-requires-execution-evidence");
   }
   if (hasChangedSource && input.impactMap.changedSymbols.length === 0) {
     blockingReasons.push("no-changed-symbols-resolved");
   }
-  if (hasChangedSource && input.impactMap.workflows.length === 0) {
+  if (hasChangedSource && runtimeWorkflows.length === 0) {
     blockingReasons.push("no-workflow-entrypoints-resolved");
   }
 
@@ -392,7 +394,7 @@ export function buildProofPlan(input: BuildProofPlanInput): CompiledProofPlan {
         input.impactMap.diffFiles.flatMap((file) => [file.newPath, file.oldPath].filter((value): value is string => value !== null)),
       ),
       changedSymbolIds: sortedUnique(input.impactMap.changedSymbols.map((symbol) => symbol.id)),
-      workflowIds: sortedUnique(input.impactMap.workflows.map((workflow) => workflow.id)),
+      workflowIds: sortedUnique(runtimeWorkflows.map((workflow) => workflow.id)),
     },
     blockingReasons: uniqueBlockingReasons,
     reviewReasons: uniqueReviewReasons,

@@ -167,7 +167,7 @@ test("claim-proof planning is claimed before the evidence run ledger", async () 
             health: { method: "GET", path: "/healthz", expectedStatus: 200, timeoutMs: 1_000, intervalMs: 25 },
             shutdownGraceMs: 100,
           },
-          operations: [{ id: "retry-job", method: "POST", pathTemplate: "/jobs/{job_id}/generate", allowedQueryKeys: [], allowedBodyKeys: [], maxInvocations: 2 }],
+          operations: [{ id: "retry-job", description: "Retry one logical job.", method: "POST", pathTemplate: "/jobs/{job_id}/generate", allowedQueryKeys: [], allowedBodyKeys: [], maxInvocations: 2 }],
           fixtures: [],
         },
         trustedAuthorityReferences: [{ class: "REPOSITORY_POLICY", reference: "policy:retry-v1" }],

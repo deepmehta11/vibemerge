@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "version": "produactadkit-retry-proof-v1",
+  "application": {
+    "runtime": "python",
+    "executable": "python3",
+    "cwd": ".",
+    "args": ["/workspace/probes/produactadkit-engine/claim-proof-app.py"],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "port": 43121,
+    "health": {
+      "method": "GET",
+      "path": "/healthz",
+      "expectedStatus": 200,
+      "timeoutMs": 10000,
+      "intervalMs": 50
+    },
+    "shutdownGraceMs": 500
+  },
+  "operations": [
+    {
+      "id": "submit-generation-job",
+      "description": "Submit one ProductAdKit generation job. Reusing idempotency_key represents a retry of the same logical job; different or absent keys represent independent submissions.",
+      "method": "POST",
+      "pathTemplate": "/jobs",
+      "allowedQueryKeys": [],
+      "allowedBodyKeys": ["idempotency_key"],
+      "maxInvocations": 2
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "retry-job-state-v1",
+      "description": "Reset and observe bounded ProductAdKit job side effects for retry, distinct-key, and missing-key experiments.",
+      "stateFields": [
+        {
+          "path": "/submissions",
+          "description": "Number of HTTP job submissions made by the experiment."
+        },
+        {
+          "path": "/unique_job_ids",
+          "description": "Number of distinct ProductAdKit job identities returned."
+        },
+        {
+          "path": "/generation_calls",
+          "description": "Number of generation handler invocations, the bounded proxy for images and charges."
+        }
+      ],
+      "setupEndpoint": {
+        "method": "POST",
+        "path": "/__mergeproof/fixtures/retry-job/setup",
+        "expectedStatus": 204
+      },
+      "stateEndpoint": {
+        "method": "GET",
+        "path": "/__mergeproof/fixtures/retry-job/state",
+        "expectedStatus": 200
+      }
+    }
+  ]
+}

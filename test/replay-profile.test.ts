@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { claimCompilerExecutionCatalog } from "../src/claim-compiler.js";
 import {
   parseTrustedReplayProfile,
   replayOrigin,
@@ -91,5 +93,19 @@ test("trusted replay profile digests are independent of map and registry orderin
   assert.equal(
     trustedReplayProfileDigest(parseTrustedReplayProfile(first)),
     trustedReplayProfileDigest(parseTrustedReplayProfile(second)),
+  );
+});
+
+test("ProductAdKit replay profile gives the compiler controller-owned operation and state semantics", () => {
+  const parsed = parseTrustedReplayProfile(
+    JSON.parse(readFileSync("config/produactadkit-engine.replay-profile.json", "utf8")),
+  );
+  const catalog = claimCompilerExecutionCatalog(parsed);
+
+  assert.deepEqual(catalog.operations.map(({ path }) => path), ["/jobs"]);
+  assert.deepEqual(catalog.operations[0]?.allowedBodyKeys, ["idempotency_key"]);
+  assert.deepEqual(
+    catalog.fixtures[0]?.stateFields.map(({ path }) => path),
+    ["/generation_calls", "/submissions", "/unique_job_ids"],
   );
 });

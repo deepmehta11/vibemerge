@@ -789,6 +789,28 @@ function leadingPythonIndent(line: string): number {
   return /^ */.exec(line)?.[0].length ?? 0;
 }
 
+function pythonDeclarationHeaderEnd(lines: readonly string[], startIndex: number): number | null {
+  let parentheses = 0;
+  let brackets = 0;
+  let braces = 0;
+  for (let lineIndex = startIndex; lineIndex < Math.min(lines.length, startIndex + 50); lineIndex += 1) {
+    const line = lines[lineIndex] ?? "";
+    for (const character of line) {
+      if (character === "(") parentheses += 1;
+      else if (character === ")") parentheses -= 1;
+      else if (character === "[") brackets += 1;
+      else if (character === "]") brackets -= 1;
+      else if (character === "{") braces += 1;
+      else if (character === "}") braces -= 1;
+      if (parentheses < 0 || brackets < 0 || braces < 0) return null;
+    }
+    if (parentheses === 0 && brackets === 0 && braces === 0 && line.trimEnd().endsWith(":")) {
+      return lineIndex;
+    }
+  }
+  return null;
+}
+
 function parsePythonSource(filePath: string, content: string): ParsedPythonResult {
   const masked = maskPythonStringsAndComments(content);
   const issues = [...masked.issues];
@@ -810,8 +832,14 @@ function parsePythonSource(filePath: string, content: string): ParsedPythonResul
     }
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    const functionMatch = /^( *)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(.*\)\s*(?:->\s*[^:]+)?\s*:\s*$/.exec(line);
-    const classMatch = /^( *)class\s+([A-Za-z_]\w*)\b.*:\s*$/.exec(line);
+    const functionStart = /^( *)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/.exec(line);
+    const classStart = /^( *)class\s+([A-Za-z_]\w*)\b/.exec(line);
+    const functionMatch = functionStart && pythonDeclarationHeaderEnd(masked.codeLines, lineIndex) !== null
+      ? functionStart
+      : null;
+    const classMatch = classStart && pythonDeclarationHeaderEnd(masked.codeLines, lineIndex) !== null
+      ? classStart
+      : null;
     if (functionMatch?.[2]) {
       declarations.push({
         type: "function",
@@ -940,7 +968,7 @@ function workflowKind(filePath: string, symbolName: string): WorkflowKind | null
   const lowerName = symbolName.toLowerCase().replaceAll("_", "");
   if (/(^|\/)(?:test|tests|__tests__|spec)(\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]+\.pyi?$|_test\.pyi?$/.test(lowerPath)) return "test";
   if (/(^|\/)(?:bin|cli)(\/|$)/.test(lowerPath) || /(?:^|\.)(?:cli|command)$/.test(lowerName)) return "cli";
-  if (/(?:^|\/)(?:server|serve|main|index)(?:\.[cm]?[jt]sx?|\.pyi?)$/.test(lowerPath) || /(?:^|\.)(?:serve|server|start|main)$/.test(lowerName)) return "server";
+  if (/(?:^|\/)(?:app|server|serve|main|index)(?:\.[cm]?[jt]sx?|\.pyi?)$/.test(lowerPath) || /(?:^|\.)(?:serve|server|start|main)$/.test(lowerName)) return "server";
   if (/(^|\/)(?:workers?|consumers?)(\/|$)/.test(lowerPath) || /(?:^|\.)(?:worker|consume|processmessage)$/.test(lowerName)) return "worker";
   if (/(^|\/)(?:jobs?|queues?)(\/|$)/.test(lowerPath) || /(?:^|\.)(?:job|runjob|processjob|enqueue)$/.test(lowerName)) return "job";
   if (/(^|\/)(?:routes?|handlers?|controllers?)(\/|$)/.test(lowerPath) || /(?:^|\.)(?:handler|handle|route|controller)$/.test(lowerName)) return "route";
@@ -1589,7 +1617,29 @@ export function mapImpact(input: ImpactMapperInput): ImpactMap {
     };
   });
 
-  const sortedUnresolved = sortUnresolved(unresolved.values());
+  const relevantRanges = new Map<string, Array<{ startLine: number; endLine: number }>>();
+  for (const symbolId of visitedDistance.keys()) {
+    const symbol = symbolById.get(symbolId);
+    if (!symbol) continue;
+    const ranges = relevantRanges.get(symbol.path) ?? [];
+    ranges.push({ startLine: symbol.startLine, endLine: symbol.endLine });
+    relevantRanges.set(symbol.path, ranges);
+  }
+  const alwaysCritical = new Set<UnresolvedImpactKind>([
+    "binary_change",
+    "deleted_source",
+    "missing_changed_file",
+    "unsupported_source_language",
+    "unresolved_relative_import",
+  ]);
+  const relevantUnresolved = [...unresolved.values()].filter((item) => {
+    if (item.kind === "traversal_limit") return true;
+    if (alwaysCritical.has(item.kind) && changedPaths.has(item.path)) return true;
+    return (relevantRanges.get(item.path) ?? []).some(
+      ({ startLine, endLine }) => item.line >= startLine && item.line <= endLine,
+    );
+  });
+  const sortedUnresolved = sortUnresolved(relevantUnresolved);
   const stats: ImpactMapStats = {
     repositoryFiles: repositoryFiles.size,
     repositoryBytes,
@@ -1599,6 +1649,13 @@ export function mapImpact(input: ImpactMapperInput): ImpactMap {
     parsedSourceFiles: parsedSources.size + parsedPythonSources.size,
     analyzedSymbols: [...symbolsByFile.values()].reduce((count, symbols) => count + symbols.length, 0),
   };
+  const workflowValues = [...workflows.values()];
+  const pathsWithSpecificWorkflows = new Set(
+    workflowValues.filter(({ name }) => name !== "<module>").map(({ path: workflowPath }) => workflowPath),
+  );
+  const reportedWorkflows = workflowValues
+    .filter((workflow) => workflow.name !== "<module>" || !pathsWithSpecificWorkflows.has(workflow.path))
+    .sort((left, right) => left.distance - right.distance || left.path.localeCompare(right.path) || left.id.localeCompare(right.id));
   return {
     schemaVersion: 1,
     status: sortedUnresolved.length === 0 ? "complete" : "blocked",
@@ -1607,7 +1664,7 @@ export function mapImpact(input: ImpactMapperInput): ImpactMap {
     affectedFiles: [...affectedReasons.entries()]
       .map(([filePath, reasons]) => ({ path: filePath, reasons: [...reasons].sort() }))
       .sort((left, right) => left.path.localeCompare(right.path)),
-    workflows: [...workflows.values()].sort((left, right) => left.distance - right.distance || left.path.localeCompare(right.path) || left.id.localeCompare(right.id)),
+    workflows: reportedWorkflows,
     unresolvedPaths: sortedUnresolved,
     stats,
   };

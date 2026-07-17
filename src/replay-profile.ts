@@ -38,6 +38,11 @@ const safeEnvironmentValue = z
     message: "Replay profile environment values cannot contain NUL bytes.",
   });
 const method = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const statePath = z
+  .string()
+  .min(1)
+  .max(240)
+  .regex(/^\/(?:[^~/]|~[01])*(?:\/(?:[^~/]|~[01])*)*$/, "Expected a bounded JSON pointer.");
 const operationPath = localPath.refine(
   (value) => /^\/(?:[A-Za-z0-9._~-]+|\{[a-z][a-z0-9_-]*\})(?:\/(?:[A-Za-z0-9._~-]+|\{[a-z][a-z0-9_-]*\}))*$/.test(value),
   { message: "Operation paths must use fixed segments or named placeholders." },
@@ -76,6 +81,7 @@ const trustedReplayProfileSchema = z
       .array(
         z.object({
           id: identifier,
+          description: z.string().min(1).max(1_000).default("Controller-owned replay operation."),
           method,
           pathTemplate: operationPath,
           allowedQueryKeys: z.array(identifier).max(16),
@@ -97,6 +103,19 @@ const trustedReplayProfileSchema = z
         z
           .object({
             id: identifier,
+            description: z.string().min(1).max(1_000).default("Controller-owned replay fixture."),
+            stateFields: z
+              .array(
+                z.object({
+                  path: statePath,
+                  description: z.string().min(1).max(1_000),
+                }).strict(),
+              )
+              .max(24)
+              .refine((entries) => new Set(entries.map(({ path }) => path)).size === entries.length, {
+                message: "Replay fixture state paths must be unique.",
+              })
+              .default([]),
             setupEndpoint: profileEndpoint,
             stateEndpoint: profileEndpoint,
           })
@@ -132,7 +151,12 @@ export function parseTrustedReplayProfile(value: unknown): TrustedReplayProfile 
         allowedBodyKeys: [...operation.allowedBodyKeys].sort(),
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
-    fixtures: [...parsed.fixtures].sort((left, right) => left.id.localeCompare(right.id)),
+    fixtures: parsed.fixtures
+      .map((fixture) => ({
+        ...fixture,
+        stateFields: [...fixture.stateFields].sort((left, right) => left.path.localeCompare(right.path)),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
   };
 }
 

@@ -103,7 +103,41 @@ async function main(): Promise<void> {
     const revision = { repository: "mergeproof/retry-demo", pullRequest: 42, baseSha: "a".repeat(40), headSha: "b".repeat(40) };
     const contract = await compileClaimContract(
       { compile: async (input) => compiledCandidate(input) },
-      { ...revision, title: "Fix duplicate image generation when a job is retried", description: "Retrying a job must not create extra images or charges.", trustedAuthorityReferences: [authority] },
+      {
+        ...revision,
+        title: "Fix duplicate image generation when a job is retried",
+        description: "Retrying a job must not create extra images or charges.",
+        trustedAuthorityReferences: [authority],
+        trustedExecutionCatalog: {
+          operations: [{
+            id: "generate-job",
+            description: "Generate one image for the selected logical job.",
+            method: "POST",
+            path: "/jobs/{job_id}/generate",
+            allowedQueryKeys: [],
+            allowedBodyKeys: [],
+            maxInvocations: 2,
+          }],
+          fixtures: [
+            {
+              id: "empty-job",
+              description: "A logical image job with no generated side effects.",
+              stateFields: [
+                { path: "/imageCount", description: "Generated image count." },
+                { path: "/chargeCount", description: "Recorded charge count." },
+              ],
+            },
+            {
+              id: "duplicate-job",
+              description: "A logical image job already containing duplicate side effects.",
+              stateFields: [
+                { path: "/imageCount", description: "Generated image count." },
+                { path: "/chargeCount", description: "Recorded charge count." },
+              ],
+            },
+          ],
+        },
+      },
     );
     const diff = `diff --git a/jobs.mjs b/jobs.mjs
 --- a/jobs.mjs
