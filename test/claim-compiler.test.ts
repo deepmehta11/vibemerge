@@ -323,6 +323,18 @@ test("model output must include mandatory positive and negative controls", () =>
   );
 });
 
+test("model output controls must reference an existing replay plan", () => {
+  const unknownControlPlan = validModelOutput();
+  const negativeControl = unknownControlPlan.negativeControls[0];
+  assert.ok(negativeControl);
+  negativeControl.replayPlanId = "missing-negative-replay";
+
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(unknownControlPlan),
+    /control replay plan.*existing replay plan/i,
+  );
+});
+
 test("mandatory negative controls preserve primary assertions while perturbing inputs", () => {
   const changedAssertion = validModelOutput();
   const changedAssertionPlan = changedAssertion.replayPlans.find(({ id }) => id === "negative-replay");

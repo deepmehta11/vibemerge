@@ -126,6 +126,22 @@ test("structured output retry preserves the causal meaning of a negative control
   assert.match(feedback[1] ?? "", /setup or request inputs/);
 });
 
+test("structured output retry repairs unknown control replay-plan references", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        "Invalid output type: Every control replay plan must reference an existing replay plan.",
+      );
+    }
+    return "corrected control reference";
+  });
+
+  assert.equal(result, "corrected control reference");
+  assert.match(feedback[1] ?? "", /replayPlanId must exactly match an id in replayPlans/);
+});
+
 function revisionForIssue(issue: CanonicalGitHubIssue = canonicalIssue): PinnedRevision {
   const context = plannerLinkedIssueContext(linkedIssue, issue);
   if (!context) throw new Error("Test issue must be a canonical issue.");

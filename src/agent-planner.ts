@@ -118,6 +118,15 @@ function structuredOutputRetryGuidance(message: string): string {
     );
   }
   if (
+    message.includes("control replay plan must reference an existing replay plan")
+  ) {
+    return (
+      "The previous response referenced a control replay plan that was not supplied. Every " +
+      "positiveControls and negativeControls replayPlanId must exactly match an id in replayPlans. " +
+      "Return one complete replacement object."
+    );
+  }
+  if (
     message.includes("primary causal experiment") ||
     message.includes("mandatory claim must be referenced by a primary replay plan")
   ) {
