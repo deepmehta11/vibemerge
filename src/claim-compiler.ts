@@ -412,6 +412,38 @@ export const claimCompilerModelOutputSchema = claimContractCandidateSchema
         message: "Every mandatory claim must be referenced by a primary replay plan.",
       });
     }
+    const replayPlans = new Map(value.replayPlans.map((plan) => [plan.id, plan]));
+    for (const [index, control] of value.negativeControls.entries()) {
+      if (!control.mandatory) continue;
+      const negativePlan = replayPlans.get(control.replayPlanId);
+      if (!negativePlan) continue;
+      const matchingPrimaryPlans = primaryPlans.filter(
+        (primaryPlan) => canonicalJson(primaryPlan.assertions) === canonicalJson(negativePlan.assertions),
+      );
+      if (matchingPrimaryPlans.length === 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["negativeControls", index, "replayPlanId"],
+          message:
+            "A mandatory negative control must preserve a primary replay plan's assertions exactly.",
+        });
+        continue;
+      }
+      const negativeInputs = canonicalJson({ setup: negativePlan.setup, requests: negativePlan.requests });
+      if (
+        matchingPrimaryPlans.every(
+          (primaryPlan) =>
+            canonicalJson({ setup: primaryPlan.setup, requests: primaryPlan.requests }) === negativeInputs,
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["negativeControls", index, "replayPlanId"],
+          message:
+            "A mandatory negative control must perturb the setup or requests of its matching primary replay plan.",
+        });
+      }
+    }
   });
 export type ClaimCompilerModelOutput = z.infer<typeof claimCompilerModelOutputSchema>;
 
@@ -563,6 +595,7 @@ export const CLAIM_COMPILER_SYSTEM_INSTRUCTIONS =
   "Represent every expected behavior with id, when, and outcome fields; outcome states what must be true. " +
   "Reserve at least one replay plan exclusively for primary causal proof: controls must not reference it, and its claimIds must cover every mandatory expected behavior, invariant, and failure signature. " +
   "Mark at least one positive control and at least one negative control mandatory using a supplied trusted authority. " +
+  "A mandatory negative control must preserve a primary replay plan's assertions exactly while perturbing only its setup or requests, so the same causal claim is expected to fail. " +
   "Every model-authored identifier and identifier reference must use canonical lower-case words separated only by hyphens or underscores. " +
   "Use only operations, paths, request keys, and fixture IDs supplied under trustedExecutionCatalog. " +
   "Do not create executable commands, URLs, headers, environment variables, merge decisions, or authority references that are not supplied by the controller.";

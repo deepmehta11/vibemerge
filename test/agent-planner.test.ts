@@ -109,6 +109,23 @@ test("structured output retry updates fixed guidance for a newly exposed missing
   assert.match(feedback[2] ?? "", /required field/);
 });
 
+test("structured output retry preserves the causal meaning of a negative control", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        "Invalid output type: A mandatory negative control must preserve a primary replay plan's assertions exactly.",
+      );
+    }
+    return "corrected negative control";
+  });
+
+  assert.equal(result, "corrected negative control");
+  assert.match(feedback[1] ?? "", /assertions exactly/);
+  assert.match(feedback[1] ?? "", /setup or request inputs/);
+});
+
 function revisionForIssue(issue: CanonicalGitHubIssue = canonicalIssue): PinnedRevision {
   const context = plannerLinkedIssueContext(linkedIssue, issue);
   if (!context) throw new Error("Test issue must be a canonical issue.");

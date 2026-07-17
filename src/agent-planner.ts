@@ -128,6 +128,16 @@ function structuredOutputRetryGuidance(message: string): string {
     );
   }
   if (
+    message.includes("negative control must preserve") ||
+    message.includes("negative control must perturb")
+  ) {
+    return (
+      "The previous response redefined or did not perturb the negative control. Copy one " +
+      "primary replay plan's assertions exactly, then change only its setup or request inputs " +
+      "so those same assertions are expected to fail. Return one complete replacement object."
+    );
+  }
+  if (
     message.includes("mandatory positive control") ||
     message.includes("mandatory negative control")
   ) {

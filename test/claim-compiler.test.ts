@@ -234,7 +234,15 @@ function validModelOutput() {
   const primaryPlan = candidate.replayPlans[0];
   assert.ok(primaryPlan);
   const positivePlan = { ...structuredClone(primaryPlan), id: "positive-replay" };
-  const negativePlan = { ...structuredClone(primaryPlan), id: "negative-replay" };
+  const negativePlan = {
+    ...structuredClone(primaryPlan),
+    id: "negative-replay",
+    requests: primaryPlan.requests.map((request, index) =>
+      index === 0
+        ? { ...structuredClone(request), body: { jobId: "job-without-idempotency-key" } }
+        : structuredClone(request),
+    ),
+  };
   return {
     ...candidateWithoutAmbiguities,
     positiveControls: candidate.positiveControls.map((control) => ({
@@ -312,6 +320,29 @@ test("model output must include mandatory positive and negative controls", () =>
   assert.throws(
     () => claimCompilerModelOutputSchema.parse(advisoryControls),
     /mandatory negative control/,
+  );
+});
+
+test("mandatory negative controls preserve primary assertions while perturbing inputs", () => {
+  const changedAssertion = validModelOutput();
+  const changedAssertionPlan = changedAssertion.replayPlans.find(({ id }) => id === "negative-replay");
+  assert.ok(changedAssertionPlan);
+  changedAssertionPlan.assertions = changedAssertionPlan.assertions.slice(1);
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(changedAssertion),
+    /negative control.*primary.*assertions/i,
+  );
+
+  const unchangedInputs = validModelOutput();
+  const primaryPlan = unchangedInputs.replayPlans.find(({ id }) => id === "retry-replay");
+  const unchangedInputPlan = unchangedInputs.replayPlans.find(({ id }) => id === "negative-replay");
+  assert.ok(primaryPlan);
+  assert.ok(unchangedInputPlan);
+  unchangedInputPlan.setup = structuredClone(primaryPlan.setup);
+  unchangedInputPlan.requests = structuredClone(primaryPlan.requests);
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(unchangedInputs),
+    /negative control.*perturb.*primary/i,
   );
 });
 
