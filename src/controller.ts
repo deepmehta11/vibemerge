@@ -724,7 +724,11 @@ export class MergeProofController {
             ? `Evidence receipt verdict ${receipt.verdict} is not eligible for automatic merge.`
             : "Automatic merge is disabled by the active MergeProof policy."
         );
-        const expectedCheckConclusion = eligibleForQueue ? "success" : "failure";
+        const expectedCheckConclusion =
+          receipt.verdict === "LOW_OBSERVED_RISK" &&
+          (!this.policy.autoMergeEnabled || !eligibilityReason)
+            ? "success"
+            : "failure";
         // Every PR-head conclusion is journaled before Check Run creation.
         // This covers safe, live-policy-failed, and review/non-low-risk
         // receipts: an interrupted Check Run can only be read back or failed
@@ -795,9 +799,8 @@ export class MergeProofController {
             repository: trigger.repository,
             checkRunId: checkRun.id,
             receipt,
-            ...(expectedCheckConclusion === "failure"
-              ? { conclusion: "failure" as const, summaryNote: nonEligibilityReason }
-              : {}),
+            conclusion: expectedCheckConclusion,
+            ...(!eligibleForQueue ? { summaryNote: nonEligibilityReason } : {}),
           });
           heartbeat.assertHealthy();
           this.ledger.confirmCheckRunCompletion(
