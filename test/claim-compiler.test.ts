@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   ClaimContractValidationError,
   claimCompilerPrompt,
+  claimCompilerModelOutputSchema,
   compileClaimContract,
   sanitizeClaimCompilerInput,
+  translateClaimCompilerModelOutput,
   validateAndCompileClaimContract,
   type ClaimAuthorityReference,
   type ClaimCompilerValidationContext,
@@ -225,6 +227,38 @@ function validCandidate(): ClaimContractCandidate {
     ],
   };
 }
+
+test("model-facing outcomes translate to internal then clauses before validation", () => {
+  const candidate = validCandidate();
+  const { ambiguities: _ambiguities, ...candidateWithoutAmbiguities } = candidate;
+  const modelOutput = {
+    ...candidateWithoutAmbiguities,
+    expectedBehaviors: candidate.expectedBehaviors.map(({ then, ...behavior }) => ({
+      ...behavior,
+      outcome: then,
+    })),
+    replayPlans: candidate.replayPlans.map((plan) => ({
+      ...plan,
+      assertions: plan.assertions.map((assertion) =>
+        assertion.kind === "state"
+          ? { ...assertion, fixture: "retryable-image-job-v1" }
+          : assertion,
+      ),
+    })),
+  };
+
+  const parsed = claimCompilerModelOutputSchema.parse(modelOutput);
+  const translated = translateClaimCompilerModelOutput(parsed);
+  assert.equal(translated.expectedBehaviors[0]?.then, " exactly one image and one charge are recorded ");
+  assert.equal("outcome" in (translated.expectedBehaviors[0] ?? {}), false);
+  assert.deepEqual(translated.ambiguities, []);
+  assert.equal(
+    translated.replayPlans[0]?.assertions.find((assertion) => assertion.kind === "state")
+      ?.fixture,
+    "job",
+  );
+  assert.doesNotThrow(() => validateAndCompileClaimContract(translated, context));
+});
 
 test("valid contracts normalize canonically and receive a deterministic digest", () => {
   const compiled = validateAndCompileClaimContract(validCandidate(), context);

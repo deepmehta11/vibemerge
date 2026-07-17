@@ -114,7 +114,7 @@ function structuredOutputRetryGuidance(message: string): string {
   ) {
     return (
       "The previous response omitted a required field. Every expected behavior must include " +
-      "non-empty id, when, and then fields. Return one complete replacement object."
+      "non-empty id, when, and outcome fields. Return one complete replacement object."
     );
   }
   return (
