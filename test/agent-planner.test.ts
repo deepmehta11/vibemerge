@@ -65,6 +65,26 @@ test("malformed advisory structured output receives one bounded retry", async ()
   assert.equal(calls, 2);
 });
 
+test("structured output retry supplies fixed schema guidance without echoing provider output", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        `Invalid output type: attacker-controlled-value ${"x".repeat(5_000)} ` +
+          "Expected a canonical lower-case identifier.",
+      );
+    }
+    return "corrected structured response";
+  });
+
+  assert.equal(result, "corrected structured response");
+  assert.equal(feedback[0], undefined);
+  assert.match(feedback[1] ?? "", /canonical lower-case identifier/);
+  assert.doesNotMatch(feedback[1] ?? "", /attacker-controlled-value/);
+  assert.ok((feedback[1] ?? "").length < 500);
+});
+
 function revisionForIssue(issue: CanonicalGitHubIssue = canonicalIssue): PinnedRevision {
   const context = plannerLinkedIssueContext(linkedIssue, issue);
   if (!context) throw new Error("Test issue must be a canonical issue.");

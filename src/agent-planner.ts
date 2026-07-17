@@ -100,15 +100,33 @@ export class PlannerUnavailableError extends Error {
  * Retry exactly once and only for parser failures; any second failure still
  * reaches the controller as unavailable and therefore fails closed.
  */
-export async function retryMalformedStructuredOutput<T>(operation: () => Promise<T>): Promise<T> {
+function structuredOutputRetryGuidance(message: string): string {
+  if (message.includes("Expected a canonical lower-case identifier.")) {
+    return (
+      "The previous response used a non-canonical identifier. Every model-authored id and " +
+      "every id reference must match the canonical lower-case identifier constraint. " +
+      "Return one complete replacement object."
+    );
+  }
+  return (
+    "The previous response did not satisfy the strict output schema. " +
+    "Return one complete replacement object that satisfies every field constraint."
+  );
+}
+
+export async function retryMalformedStructuredOutput<T>(
+  operation: (retryGuidance?: string) => Promise<T>,
+): Promise<T> {
   let firstError: unknown;
+  let retryGuidance: string | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await operation();
+      return await operation(retryGuidance);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (attempt === 0 && /^Invalid output type:/.test(message)) {
         firstError = error;
+        retryGuidance = structuredOutputRetryGuidance(message);
         continue;
       }
       throw error;

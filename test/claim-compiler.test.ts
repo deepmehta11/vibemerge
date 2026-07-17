@@ -339,6 +339,23 @@ test("claim compiler input is patch-blind, strips controls, redacts secrets, and
   assert.equal(prompt.includes("\u001b"), false);
 });
 
+test("claim compiler retry prompt includes controller validation guidance", () => {
+  const sanitized = sanitizeClaimCompilerInput({
+    ...revision,
+    title: "Fix retry",
+    description: "Fixes #42",
+    trustedAuthorityReferences: [maintainerAuthority, policyAuthority],
+    trustedExecutionCatalog: executionCatalog,
+  });
+  const prompt = claimCompilerPrompt(
+    sanitized,
+    "Use canonical lower-case identifiers and return a complete replacement object.",
+  );
+
+  assert.match(prompt, /CONTROLLER_RETRY_GUIDANCE/);
+  assert.match(prompt, /canonical lower-case identifiers/);
+});
+
 test("provider output is always routed through deterministic validation", async () => {
   let observedTitle = "";
   const provider = {
