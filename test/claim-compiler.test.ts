@@ -228,16 +228,28 @@ function validCandidate(): ClaimContractCandidate {
   };
 }
 
-test("model-facing outcomes translate to internal then clauses before validation", () => {
+function validModelOutput() {
   const candidate = validCandidate();
   const { ambiguities: _ambiguities, ...candidateWithoutAmbiguities } = candidate;
-  const modelOutput = {
+  const primaryPlan = candidate.replayPlans[0];
+  assert.ok(primaryPlan);
+  const positivePlan = { ...structuredClone(primaryPlan), id: "positive-replay" };
+  const negativePlan = { ...structuredClone(primaryPlan), id: "negative-replay" };
+  return {
     ...candidateWithoutAmbiguities,
+    positiveControls: candidate.positiveControls.map((control) => ({
+      ...control,
+      replayPlanId: positivePlan.id,
+    })),
+    negativeControls: candidate.negativeControls.map((control) => ({
+      ...control,
+      replayPlanId: negativePlan.id,
+    })),
     expectedBehaviors: candidate.expectedBehaviors.map(({ then, ...behavior }) => ({
       ...behavior,
       outcome: then,
     })),
-    replayPlans: candidate.replayPlans.map((plan) => ({
+    replayPlans: [primaryPlan, positivePlan, negativePlan].map((plan) => ({
       ...plan,
       assertions: plan.assertions.map((assertion) =>
         assertion.kind === "state"
@@ -246,6 +258,10 @@ test("model-facing outcomes translate to internal then clauses before validation
       ),
     })),
   };
+}
+
+test("model-facing outcomes translate to internal then clauses before validation", () => {
+  const modelOutput = validModelOutput();
 
   const parsed = claimCompilerModelOutputSchema.parse(modelOutput);
   const translated = translateClaimCompilerModelOutput(parsed);
@@ -258,6 +274,45 @@ test("model-facing outcomes translate to internal then clauses before validation
     "job",
   );
   assert.doesNotThrow(() => validateAndCompileClaimContract(translated, context));
+});
+
+test("model output must reserve a primary plan and cover every mandatory claim with it", () => {
+  const noPrimary = validModelOutput();
+  noPrimary.replayPlans = noPrimary.replayPlans.filter(({ id }) => id !== "retry-replay");
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(noPrimary),
+    /primary causal experiment/,
+  );
+
+  const uncoveredMandatoryClaim = validModelOutput();
+  const primary = uncoveredMandatoryClaim.replayPlans.find(({ id }) => id === "retry-replay");
+  assert.ok(primary);
+  primary.claimIds = ["model-invented-claim"];
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(uncoveredMandatoryClaim),
+    /mandatory claim.*primary replay plan/i,
+  );
+});
+
+test("model output must include mandatory positive and negative controls", () => {
+  const advisoryControls = validModelOutput();
+  advisoryControls.positiveControls = advisoryControls.positiveControls.map((control) => ({
+    ...control,
+    mandatory: false,
+  }));
+  advisoryControls.negativeControls = advisoryControls.negativeControls.map((control) => ({
+    ...control,
+    mandatory: false,
+  }));
+
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(advisoryControls),
+    /mandatory positive control/,
+  );
+  assert.throws(
+    () => claimCompilerModelOutputSchema.parse(advisoryControls),
+    /mandatory negative control/,
+  );
 });
 
 test("valid contracts normalize canonically and receive a deterministic digest", () => {

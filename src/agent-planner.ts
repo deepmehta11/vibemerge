@@ -117,6 +117,26 @@ function structuredOutputRetryGuidance(message: string): string {
       "non-empty id, when, and outcome fields. Return one complete replacement object."
     );
   }
+  if (
+    message.includes("primary causal experiment") ||
+    message.includes("mandatory claim must be referenced by a primary replay plan")
+  ) {
+    return (
+      "The previous response did not reserve a complete primary causal experiment. Keep at " +
+      "least one replay plan unreferenced by controls, and include every mandatory claim id " +
+      "in a primary replay plan. Return one complete replacement object."
+    );
+  }
+  if (
+    message.includes("mandatory positive control") ||
+    message.includes("mandatory negative control")
+  ) {
+    return (
+      "The previous response made required controls advisory. Mark at least one positive " +
+      "control and at least one negative control mandatory using a supplied trusted authority. " +
+      "Return one complete replacement object."
+    );
+  }
   return (
     "The previous response did not satisfy the strict output schema. " +
     "Return one complete replacement object that satisfies every field constraint."
