@@ -61,6 +61,23 @@ test("health endpoint is available without exposing webhook or receipt data", as
   }
 });
 
+test("public demo explains the causal base-candidate-ablation proof", async () => {
+  const ledger = new RunLedger();
+  const server = createGitHubWebhookServer({ secret: "server-secret", inbox: ledger });
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address.");
+    const response = await fetch(`http://127.0.0.1:${address.port}/demo`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+    assert.match(await response.text(), /Base revision[\s\S]*PR candidate[\s\S]*Fix removed/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    ledger.close();
+  }
+});
+
 test("readiness endpoint reports when the process is draining", async () => {
   const ledger = new RunLedger();
   let ready = false;

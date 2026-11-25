@@ -1,6 +1,6 @@
 {
   "allowedRepositories": ["mvplab-ai/produactadkit-engine"],
-  "autoMergeEnabled": true,
+  "autoMergeEnabled": false,
   "mergeStrategy": "github_api",
   "verification": {
     "version": "produactadkit-engine-v1",

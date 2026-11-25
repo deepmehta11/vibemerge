@@ -29,6 +29,22 @@ export type MetricName =
   | "cpu_ms"
   | "error_rate";
 
+export type HarnessPhase = "base" | "candidate" | "ablation";
+
+export interface GeneratedExperimentObservation {
+  id: string;
+  kind: "primary" | "positive_control" | "negative_control";
+  observed: "pass" | "fail" | "unsupported";
+  assertions: number;
+  failedAssertionIds: string[];
+  artifactDigest: string;
+}
+
+export interface GeneratedProofPhaseResult {
+  proofPlanDigest: string;
+  experiments: GeneratedExperimentObservation[];
+}
+
 export interface PinnedRevision {
   repository: string;
   pullRequest: number;
@@ -44,6 +60,12 @@ export interface PinnedRevision {
    * proof identity instead of allowing a prior receipt to be reused.
    */
   issueContextDigest?: string;
+  /**
+   * Identity of the immutable generated claim-to-proof bundle. It is added
+   * before the evidence ledger is claimed, so a changed plan cannot reuse a
+   * prior run or receipt for the same Git revision.
+   */
+  claimProofEvidenceIdentity?: string;
 }
 
 export interface PairedCheck {
@@ -64,7 +86,7 @@ export interface PairedMetric {
 }
 
 export interface HarnessResult {
-  phase: "base" | "candidate";
+  phase: HarnessPhase;
   sandboxId: string;
   harnessVersion: string;
   checks: Array<{
@@ -80,6 +102,7 @@ export interface HarnessResult {
     value: number | null;
     detail: string;
   }>;
+  generatedProof?: GeneratedProofPhaseResult;
 }
 
 export interface MetricThreshold {
@@ -132,6 +155,8 @@ export interface EvidenceReceipt {
   issueToProof: IssueToProofReceiptContext;
   base: HarnessResult;
   candidate: HarnessResult;
+  /** Present when the generated claim-to-proof path was enabled for this run. */
+  claimProof?: ClaimProofReceipt;
   pairedChecks: PairedCheck[];
   pairedMetrics: PairedMetric[];
   agentAnalysis: AgentAnalysis;
@@ -141,6 +166,28 @@ export interface EvidenceReceipt {
   reasons: VerdictReason[];
   observedAt: string;
   integrityHash: string;
+}
+
+export interface ClaimProofReceipt {
+  schemaVersion: 1;
+  analysisKey: string;
+  evidenceIdentity: string;
+  claimContractDigest: string;
+  impactMapDigest: string;
+  proofPlanDigest: string;
+  replayProfileDigest: string;
+  phases: {
+    base: GeneratedProofPhaseResult;
+    candidate: GeneratedProofPhaseResult;
+    ablation: GeneratedProofPhaseResult;
+  };
+  targetCoverage: Record<string, string[]>;
+  judgment: {
+    decision: "MERGE" | "REPAIR" | "SPLIT" | "BLOCK";
+    reasons: string[];
+    satisfiedExperimentIds: string[];
+    uncoveredImpactTargetIds: string[];
+  };
 }
 
 /**

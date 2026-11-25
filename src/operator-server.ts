@@ -97,6 +97,17 @@ export function serveOperatorConsole(
   if (!operatorPath) {
     return false;
   }
+  // Authentication must precede every operator action, including mutations.
+  // The confirmation header is a CSRF defense, not an authorization boundary.
+  if (!isAuthorized(request, config.token)) {
+    response.writeHead(401, {
+      "content-type": "application/json; charset=utf-8",
+      "www-authenticate": 'Basic realm="MergeProof Operator", charset="UTF-8"',
+      ...securityHeaders,
+    });
+    response.end(JSON.stringify({ error: "operator_authentication_required" }));
+    return true;
+  }
   const automationAction = url.pathname.match(/^\/api\/operator\/v1\/automation\/(pause|resume)$/)?.[1];
   if (request.method === "POST" && automationAction) {
     if (header(request, "x-mergeproof-operator-action") !== automationAction) {
@@ -109,15 +120,6 @@ export function serveOperatorConsole(
   }
   if (request.method !== "GET") {
     reply(response, 405, { error: "method_not_allowed" });
-    return true;
-  }
-  if (!isAuthorized(request, config.token)) {
-    response.writeHead(401, {
-      "content-type": "application/json; charset=utf-8",
-      "www-authenticate": 'Basic realm="MergeProof Operator", charset="UTF-8"',
-      ...securityHeaders,
-    });
-    response.end(JSON.stringify({ error: "operator_authentication_required" }));
     return true;
   }
   if (url.pathname === "/ops") {

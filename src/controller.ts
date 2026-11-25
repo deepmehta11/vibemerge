@@ -1,4 +1,9 @@
 import { canonicalJson, revisionRunKey, sha256, verifyReceipt } from "./crypto.js";
+import type {
+  ClaimCompilerIdentity,
+  ClaimProofCoordinator,
+} from "./claim-proof-coordinator.js";
+import type { ClaimAuthorityReference } from "./claim-compiler.js";
 import {
   extractLinkedIssue,
   plannerLinkedIssueContext,
@@ -21,6 +26,7 @@ import type { GitHubPermission, InstallationTokenProvider } from "./github-app.j
 import type { PullRequestTrigger } from "./github-webhook-event.js";
 import type { EvidenceHarness } from "./harness.js";
 import type { EvidenceHarnessFactory } from "./harness.js";
+import type { TrustedReplayProfile } from "./replay-profile.js";
 import { RunLedger, type ExternalOperation, type RunLease } from "./ledger.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import type { MergeGateway } from "./merge-broker.js";
@@ -59,6 +65,16 @@ export interface MergeProofControllerPolicy {
   trustedArtifactDigest?: string;
   /** Runtime-owned identity for VibeMerge's evidence Check Run. */
   requiredEvidenceCheck?: { name: string; appId: number };
+}
+
+export interface ClaimProofControllerConfiguration {
+  coordinator: Pick<ClaimProofCoordinator, "prepare">;
+  replayProfile: TrustedReplayProfile;
+  trustedAuthorityReferences: readonly ClaimAuthorityReference[];
+  baseContractDigest: string;
+  compiler: ClaimCompilerIdentity;
+  workerId: string;
+  planningLeaseMs: number;
 }
 
 export type ControllerResult =
@@ -124,6 +140,11 @@ const commentPermissions = {
 } as const;
 const DEFAULT_VERIFICATION_RUN_LEASE_MS = 20 * 60_000;
 const AUTOMATION_PAUSED_REASON = "MergeProof automatic merge is paused by an operator.";
+
+function withoutClaimProofIdentity(revision: PinnedRevision): PinnedRevision {
+  const { claimProofEvidenceIdentity: _claimProofEvidenceIdentity, ...base } = revision;
+  return base;
+}
 
 export function commentFailureDiagnostic(error: unknown): {
   stage: "token_mint" | "comment_list" | "comment_create" | "comment_update" | "comment_gateway";
@@ -262,6 +283,7 @@ export class MergeProofController {
     private readonly now: () => Date = () => new Date(),
     private readonly planner?: ProofPlanner,
     private readonly harnessFactory?: EvidenceHarnessFactory,
+    private readonly claimProof?: ClaimProofControllerConfiguration,
   ) {}
 
   async process(trigger: PullRequestTrigger): Promise<ControllerResult> {
@@ -323,7 +345,7 @@ export class MergeProofController {
         ? plannerLinkedIssueContext(linkedIssue, canonicalIssue)
         : null;
 
-    const revision: PinnedRevision = {
+    const revisionWithoutClaimProof: PinnedRevision = {
       repository: trigger.repository,
       pullRequest: trigger.pullRequest,
       baseSha: live.baseSha,
@@ -336,7 +358,10 @@ export class MergeProofController {
     const now = this.now();
     if (queuedForPullRequest?.receipt) {
       const queuedRevision = queuedForPullRequest.receipt.revision;
-      if (revisionRunKey(queuedRevision) === revisionRunKey(revision)) {
+      if (
+        revisionRunKey(withoutClaimProofIdentity(queuedRevision)) ===
+        revisionRunKey(revisionWithoutClaimProof)
+      ) {
         return this.revalidateQueuedRevision(
           trigger,
           live,
@@ -369,6 +394,42 @@ export class MergeProofController {
       }
       return { state: "not_eligible", reason: `Required live check failed: ${requiredCheck.check}${source}.` };
     }
+    let revision = revisionWithoutClaimProof;
+    let preparedClaimProof:
+      | { bundle: import("./proof-plan-store.js").SealedProofPlanningBundle; ablationDiff: string }
+      | undefined;
+    if (this.claimProof) {
+      const preparation = await this.claimProof.coordinator.prepare({
+        repository: revision.repository,
+        pullRequest: revision.pullRequest,
+        baseSha: revision.baseSha,
+        headSha: revision.headSha,
+        mergeSha: revision.mergeSha,
+        title: live.title,
+        description: live.description,
+        diff: live.diff,
+        githubReadToken: readToken.token,
+        trustedAuthorityReferences: this.claimProof.trustedAuthorityReferences,
+        baseContractDigest: this.claimProof.baseContractDigest,
+        policyHash: revision.policyHash,
+        trustedArtifactDigest: revision.trustedArtifactDigest,
+        compiler: this.claimProof.compiler,
+        replayProfile: this.claimProof.replayProfile,
+        workerId: this.claimProof.workerId,
+        leaseMs: this.claimProof.planningLeaseMs,
+      });
+      if (preparation.state === "busy") {
+        return { state: "busy", retryAt: preparation.retryAt };
+      }
+      revision = {
+        ...revision,
+        claimProofEvidenceIdentity: preparation.evidenceKey,
+      };
+      preparedClaimProof = {
+        bundle: preparation.record.bundle,
+        ablationDiff: live.diff,
+      };
+    }
     const claimed = this.ledger.claim(
       revision,
       `delivery:${trigger.deliveryId}`,
@@ -391,6 +452,7 @@ export class MergeProofController {
       now,
       linkedIssue,
       canonicalIssue,
+      preparedClaimProof,
     );
   }
 
@@ -568,6 +630,7 @@ export class MergeProofController {
     now: Date,
     linkedIssue: LinkedIssueReference | null,
     canonicalIssue: CanonicalGitHubIssue | undefined,
+    preparedClaimProof?: import("./verifier.js").PreparedClaimProofVerification,
   ): Promise<ControllerResult> {
     const runLeaseMs = this.verificationRunLeaseMs();
     const heartbeat = startLeaseHeartbeat(
@@ -594,6 +657,7 @@ export class MergeProofController {
           ...(linkedIssue ? { linkedIssue } : {}),
           ...(canonicalIssue ? { canonicalIssue } : {}),
         },
+        preparedClaimProof,
       );
       heartbeat.assertHealthy();
       this.ledger.recordReceipt(lease, receipt, this.now().getTime());
@@ -660,7 +724,11 @@ export class MergeProofController {
             ? `Evidence receipt verdict ${receipt.verdict} is not eligible for automatic merge.`
             : "Automatic merge is disabled by the active MergeProof policy."
         );
-        const expectedCheckConclusion = eligibleForQueue ? "success" : "failure";
+        const expectedCheckConclusion =
+          receipt.verdict === "LOW_OBSERVED_RISK" &&
+          (!this.policy.autoMergeEnabled || !eligibilityReason)
+            ? "success"
+            : "failure";
         // Every PR-head conclusion is journaled before Check Run creation.
         // This covers safe, live-policy-failed, and review/non-low-risk
         // receipts: an interrupted Check Run can only be read back or failed
@@ -731,9 +799,8 @@ export class MergeProofController {
             repository: trigger.repository,
             checkRunId: checkRun.id,
             receipt,
-            ...(expectedCheckConclusion === "failure"
-              ? { conclusion: "failure" as const, summaryNote: nonEligibilityReason }
-              : {}),
+            conclusion: expectedCheckConclusion,
+            ...(!eligibleForQueue ? { summaryNote: nonEligibilityReason } : {}),
           });
           heartbeat.assertHealthy();
           this.ledger.confirmCheckRunCompletion(

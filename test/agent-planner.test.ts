@@ -42,7 +42,7 @@ const canonicalIssue: CanonicalGitHubIssue = {
   isPullRequest: false,
 };
 
-test("malformed advisory structured output receives one bounded retry", async () => {
+test("malformed advisory structured output receives at most two bounded retries", async () => {
   let calls = 0;
   const result = await retryMalformedStructuredOutput(async () => {
     calls += 1;
@@ -62,7 +62,84 @@ test("malformed advisory structured output receives one bounded retry", async ()
     }),
     /Invalid output type/,
   );
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
+});
+
+test("structured output retry supplies fixed schema guidance without echoing provider output", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        `Invalid output type: attacker-controlled-value ${"x".repeat(5_000)} ` +
+          "Expected a canonical lower-case identifier.",
+      );
+    }
+    return "corrected structured response";
+  });
+
+  assert.equal(result, "corrected structured response");
+  assert.equal(feedback[0], undefined);
+  assert.match(feedback[1] ?? "", /canonical lower-case identifier/);
+  assert.doesNotMatch(feedback[1] ?? "", /attacker-controlled-value/);
+  assert.ok((feedback[1] ?? "").length < 500);
+});
+
+test("structured output retry updates fixed guidance for a newly exposed missing field", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (feedback.length === 1) {
+      throw new Error(
+        'Invalid output type: final assistant output failed schema validation at "expectedBehaviors.0.id" ' +
+          "(Expected a canonical lower-case identifier.).",
+      );
+    }
+    if (feedback.length === 2) {
+      throw new Error(
+        'Invalid output type: final assistant output failed schema validation at "expectedBehaviors.0.then" ' +
+          "(Invalid input: expected string, received undefined).",
+      );
+    }
+    return "complete structured response";
+  });
+
+  assert.equal(result, "complete structured response");
+  assert.match(feedback[1] ?? "", /canonical lower-case identifier/);
+  assert.match(feedback[2] ?? "", /required field/);
+});
+
+test("structured output retry preserves the causal meaning of a negative control", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        "Invalid output type: A mandatory negative control must preserve a primary replay plan's assertions exactly.",
+      );
+    }
+    return "corrected negative control";
+  });
+
+  assert.equal(result, "corrected negative control");
+  assert.match(feedback[1] ?? "", /assertions exactly/);
+  assert.match(feedback[1] ?? "", /setup or request inputs/);
+});
+
+test("structured output retry repairs unknown control replay-plan references", async () => {
+  const feedback: Array<string | undefined> = [];
+  const result = await retryMalformedStructuredOutput(async (retryGuidance) => {
+    feedback.push(retryGuidance);
+    if (!retryGuidance) {
+      throw new Error(
+        "Invalid output type: Every control replay plan must reference an existing replay plan.",
+      );
+    }
+    return "corrected control reference";
+  });
+
+  assert.equal(result, "corrected control reference");
+  assert.match(feedback[1] ?? "", /replayPlanId must exactly match an id in replayPlans/);
 });
 
 function revisionForIssue(issue: CanonicalGitHubIssue = canonicalIssue): PinnedRevision {

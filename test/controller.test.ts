@@ -117,6 +117,76 @@ test("a durable operator pause blocks a PR before token minting or sandbox work"
   }
 });
 
+test("claim-proof planning is claimed before the evidence run ledger", async () => {
+  const tokens = new RecordingTokens();
+  const ledger = new RunLedger();
+  let harnessCalls = 0;
+  let preparationCalls = 0;
+  try {
+    const result = await new MergeProofController(
+      {
+        allowedRepositories: [trigger.repository],
+        autoMergeEnabled: false,
+        mergeStrategy: "direct_fixture",
+        verification: demoVerificationPolicy,
+        merge: demoMergePolicy,
+      },
+      tokens,
+      {
+        createReadGateway: () => ({ getPullRequest: async () => live() }),
+        createMergeGateway: () => new MemoryMergeGateway(live()),
+      },
+      {
+        kind: "must-not-run",
+        collect: async () => {
+          harnessCalls += 1;
+          throw new Error("evidence ran before proof planning completed");
+        },
+      },
+      ledger,
+      () => new Date("2026-07-16T18:00:00.000Z"),
+      undefined,
+      undefined,
+      {
+        coordinator: {
+          prepare: async () => {
+            preparationCalls += 1;
+            return { state: "busy" as const, analysisKey: "a".repeat(64), retryAt: 123_456 };
+          },
+        },
+        replayProfile: {
+          schemaVersion: 1,
+          version: "controller-v1",
+          application: {
+            runtime: "node",
+            executable: "node",
+            cwd: ".",
+            args: ["server.mjs"],
+            env: {},
+            port: 4_321,
+            health: { method: "GET", path: "/healthz", expectedStatus: 200, timeoutMs: 1_000, intervalMs: 25 },
+            shutdownGraceMs: 100,
+          },
+          operations: [{ id: "retry-job", description: "Retry one logical job.", method: "POST", pathTemplate: "/jobs/{job_id}/generate", allowedQueryKeys: [], allowedBodyKeys: [], maxInvocations: 2 }],
+          fixtures: [],
+        },
+        trustedAuthorityReferences: [{ class: "REPOSITORY_POLICY", reference: "policy:retry-v1" }],
+        baseContractDigest: "b".repeat(64),
+        compiler: { model: "gpt-5.4", schemaVersion: 1, toolVersion: "claim-compiler-v1" },
+        workerId: "test-planner",
+        planningLeaseMs: 60_000,
+      },
+    ).process(trigger);
+
+    assert.deepEqual(result, { state: "busy", retryAt: 123_456 });
+    assert.equal(preparationCalls, 1);
+    assert.equal(harnessCalls, 0);
+    assert.equal(ledger.listRuns().runs.length, 0);
+  } finally {
+    ledger.close();
+  }
+});
+
 test("a pause that lands during evidence prevents all later PR write actions", async () => {
   const tokens = new RecordingTokens();
   const ledger = new RunLedger();
@@ -511,6 +581,70 @@ test("merge-queue strategy enqueues only a sealed low-risk exact head", async ()
       { pull_requests: "write" },
       { pull_requests: "write" },
     ]);
+  } finally {
+    ledger.close();
+  }
+});
+
+test("a green evidence receipt stays successful when automatic merge is disabled", async () => {
+  const tokens = new RecordingTokens();
+  const ledger = new RunLedger();
+  const completions: Array<{ conclusion?: string; summaryNote?: string }> = [];
+  const comments: Array<string | undefined> = [];
+  const enqueues: string[] = [];
+  try {
+    const result = await new MergeProofController(
+      {
+        allowedRepositories: [trigger.repository],
+        autoMergeEnabled: false,
+        mergeStrategy: "merge_queue",
+        verification: demoVerificationPolicy,
+        merge: demoMergePolicy,
+      },
+      tokens,
+      {
+        createReadGateway: () => ({ getPullRequest: async () => live() }),
+        createMergeGateway: () => new MemoryMergeGateway(live()),
+        createQueueGateway: () => ({
+          enqueue: async () => {
+            enqueues.push("unexpected");
+            return { message: "unexpected" };
+          },
+        }),
+        createCheckRunGateway: () => ({
+          createInProgress: async () => ({ id: 8 }),
+          complete: async (input) => {
+            completions.push({
+              ...(input.conclusion ? { conclusion: input.conclusion } : {}),
+              ...(input.summaryNote ? { summaryNote: input.summaryNote } : {}),
+            });
+          },
+        }),
+        createCommentGateway: () => ({
+          upsert: async (input) => {
+            comments.push(input.eligibilityReason);
+          },
+        }),
+      },
+      new FixtureEvidenceHarness(safeFixture()),
+      ledger,
+      () => new Date("2026-07-17T14:00:00.000Z"),
+    ).process(trigger);
+
+    assert.equal(result.state, "not_merged");
+    if (result.state !== "not_merged") return;
+    assert.equal(result.receipt.verdict, "LOW_OBSERVED_RISK");
+    assert.deepEqual(enqueues, []);
+    assert.deepEqual(completions, [{
+      conclusion: "success",
+      summaryNote: "Automatic merge is disabled by the active MergeProof policy.",
+    }]);
+    assert.deepEqual(comments, ["Automatic merge is disabled by the active MergeProof policy."]);
+    assert.equal(
+      ledger.getExternalOperation(`check_run_publish:${result.receipt.runKey}`)
+        ?.expectation.expectedCheckConclusion,
+      "success",
+    );
   } finally {
     ledger.close();
   }

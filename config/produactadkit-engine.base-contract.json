@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "version": "produactadkit-retry-idempotency-v1",
+  "repository": "mvplab-ai/produactadkit-engine",
+  "behavior": "Submitting one logical generation job twice with the same idempotency key creates one durable job and invokes generation once.",
+  "failure": "The base behavior is reproduced when two identical submissions create two job identities and invoke generation twice.",
+  "controls": {
+    "positive": "Two submissions with different idempotency keys create two jobs and invoke generation twice.",
+    "negative": "Two submissions without an idempotency key are not deduplicated."
+  }
+}

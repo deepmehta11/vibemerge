@@ -76,7 +76,7 @@ async function shutdown(signal: string): Promise<void> {
       await pool.stop();
       await reconciliationPool.stop();
     } finally {
-      runtime.ledger.close();
+      runtime.close();
     }
   })();
   return shutdownPromise;

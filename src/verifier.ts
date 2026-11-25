@@ -12,6 +12,7 @@ import type {
   AdvisoryProofScenario,
   CanonicalGitHubIssue,
   CheckStatus,
+  ClaimProofReceipt,
   EvidenceReceipt,
   HarnessResult,
   IssueToProofReceiptContext,
@@ -22,8 +23,14 @@ import type {
   VerificationPolicy,
   VerdictReason,
 } from "./domain.js";
+import {
+  deriveCausalTargetCoverage,
+  judgeClaimProof,
+  type ExperimentObservation,
+} from "./deterministic-judge.js";
 import { HarnessUnavailableError, type EvidenceHarness } from "./harness.js";
 import { evaluateEvidence } from "./policy.js";
+import type { SealedProofPlanningBundle } from "./proof-plan-store.js";
 
 export type VerificationPullRequestContext = Pick<
   PlannerInput,
@@ -33,6 +40,12 @@ export type VerificationPullRequestContext = Pick<
   /** Canonical issue data from the controller read gateway; never persisted verbatim. */
   canonicalIssue?: CanonicalGitHubIssue;
 };
+
+export interface PreparedClaimProofVerification {
+  bundle: SealedProofPlanningBundle;
+  /** Exact base-to-candidate diff reverse-applied only for the ablation phase. */
+  ablationDiff: string;
+}
 
 function pairChecks(base: HarnessResult, candidate: HarnessResult): {
   checks: PairedCheck[];
@@ -133,7 +146,7 @@ function pairMetrics(base: HarnessResult, candidate: HarnessResult): {
   return { metrics, reasons };
 }
 
-function unavailableResult(phase: "base" | "candidate", detail: string): HarnessResult {
+function unavailableResult(phase: HarnessResult["phase"], detail: string): HarnessResult {
   return {
     phase,
     sandboxId: "unavailable",
@@ -148,6 +161,84 @@ function unavailableResult(phase: "base" | "candidate", detail: string): Harness
       },
     ],
     metrics: [],
+  };
+}
+
+function claimProofReceipt(
+  prepared: PreparedClaimProofVerification,
+  phases: { base: HarnessResult; candidate: HarnessResult; ablation: HarnessResult },
+): { receipt: ClaimProofReceipt; reasons: VerdictReason[] } {
+  const plan = prepared.bundle.proofPlan.plan;
+  const planDigest = prepared.bundle.proofPlan.digest;
+  const reasons: VerdictReason[] = [];
+  const normalizedPhases = Object.fromEntries(
+    (["base", "candidate", "ablation"] as const).map((phase) => {
+      const generated = phases[phase].generatedProof;
+      if (!generated) {
+        reasons.push({
+          code: "INCOMPLETE_PROOF",
+          subject: `claim-proof:${phase}`,
+          detail: "The trusted harness did not emit generated claim-proof observations.",
+        });
+        return [phase, { proofPlanDigest: planDigest, experiments: [] }];
+      }
+      if (generated.proofPlanDigest !== planDigest) {
+        reasons.push({
+          code: "MISMATCHED_HARNESS_OUTPUT",
+          subject: `claim-proof:${phase}`,
+          detail: "The trusted harness emitted observations for a different sealed proof plan.",
+        });
+        return [phase, { proofPlanDigest: generated.proofPlanDigest, experiments: [] }];
+      }
+      return [phase, generated];
+    }),
+  ) as ClaimProofReceipt["phases"];
+  const observations: ExperimentObservation[] = [];
+  const experimentsById = new Map(plan.experiments.map((experiment) => [experiment.id, experiment]));
+  for (const phase of ["base", "candidate", "ablation"] as const) {
+    for (const experiment of normalizedPhases[phase].experiments) {
+      const planned = experimentsById.get(experiment.id);
+      if (planned && planned.kind !== experiment.kind) {
+        reasons.push({
+          code: "MISMATCHED_HARNESS_OUTPUT",
+          subject: `claim-proof:${phase}:${experiment.id}`,
+          detail: "The trusted harness changed the sealed experiment kind.",
+        });
+        continue;
+      }
+      observations.push({
+        experimentId: experiment.id,
+        phase,
+        observed: experiment.observed,
+        artifactDigest: experiment.artifactDigest,
+      });
+    }
+  }
+  const targetCoverage = deriveCausalTargetCoverage(plan);
+  const judged = judgeClaimProof({ plan, observations, targetCoverage });
+  const judgment = reasons.length === 0
+    ? judged
+    : {
+        ...judged,
+        decision: "BLOCK" as const,
+        reasons: [...new Set([...judged.reasons, ...reasons.map(({ subject }) => `invalid-phase:${subject}`)])].sort(),
+      };
+  return {
+    receipt: {
+      schemaVersion: 1,
+      analysisKey: prepared.bundle.analysisKey,
+      evidenceIdentity: prepared.bundle.evidenceKey,
+      claimContractDigest: plan.inputs.claimContractDigest,
+      impactMapDigest: plan.inputs.impactMapDigest,
+      proofPlanDigest: planDigest,
+      replayProfileDigest: plan.inputs.replayProfileDigest,
+      phases: normalizedPhases,
+      targetCoverage: Object.fromEntries(
+        Object.entries(targetCoverage).map(([id, targets]) => [id, [...targets]]),
+      ),
+      judgment,
+    },
+    reasons,
   };
 }
 
@@ -491,6 +582,7 @@ export class VerificationEngine {
     policy: VerificationPolicy,
     now = new Date(),
     prContext?: VerificationPullRequestContext,
+    preparedClaimProof?: PreparedClaimProofVerification,
   ): Promise<EvidenceReceipt> {
     // Planning deliberately happens first. It can only produce a bounded,
     // validated JSON plan for maintainer-owned probes; it never executes a
@@ -500,12 +592,23 @@ export class VerificationEngine {
     const issueToProof = issueToProofContextFor(revision, plannerInput);
     let base: HarnessResult;
     let candidate: HarnessResult;
+    let ablation: HarnessResult | undefined;
+
+    const generatedProofRequest = preparedClaimProof
+      ? {
+          proofPlan: preparedClaimProof.bundle.proofPlan.plan,
+          proofPlanDigest: preparedClaimProof.bundle.proofPlan.digest,
+          replayProfile: preparedClaimProof.bundle.replayProfile,
+          ablationDiff: preparedClaimProof.ablationDiff,
+        }
+      : {};
 
     try {
-      [base, candidate] = await Promise.all([
+      [base, candidate, ablation] = await Promise.all([
         this.harness.collect({
           revision,
           phase: "base",
+          ...generatedProofRequest,
           ...(agentAnalysis.issueToProofPlan
             ? { advisoryPlan: agentAnalysis.issueToProofPlan }
             : {}),
@@ -513,10 +616,18 @@ export class VerificationEngine {
         this.harness.collect({
           revision,
           phase: "candidate",
+          ...generatedProofRequest,
           ...(agentAnalysis.issueToProofPlan
             ? { advisoryPlan: agentAnalysis.issueToProofPlan }
             : {}),
         }),
+        ...(preparedClaimProof
+          ? [this.harness.collect({
+              revision,
+              phase: "ablation" as const,
+              ...generatedProofRequest,
+            })]
+          : [Promise.resolve(undefined)]),
       ]);
     } catch (error) {
       const detail =
@@ -525,6 +636,7 @@ export class VerificationEngine {
           : "Verification harness failed unexpectedly; merge is not safe to automate.";
       base = unavailableResult("base", detail);
       candidate = unavailableResult("candidate", detail);
+      if (preparedClaimProof) ablation = unavailableResult("ablation", detail);
     }
 
     const pairedChecks = pairChecks(base, candidate);
@@ -554,6 +666,24 @@ export class VerificationEngine {
     );
     const receiptIssueToProof = planAssessment.context;
     const planReasons = planAssessment.reasons;
+    let generatedReceipt: ClaimProofReceipt | undefined;
+    let generatedReasons: VerdictReason[] = [];
+    if (preparedClaimProof) {
+      if (
+        revision.claimProofEvidenceIdentity !== preparedClaimProof.bundle.evidenceKey ||
+        !ablation
+      ) {
+        generatedReasons = [{
+          code: "INCOMPLETE_PROOF",
+          subject: "claim-proof-identity",
+          detail: "The sealed claim-proof identity does not match the evidence revision.",
+        }];
+      } else {
+        const generated = claimProofReceipt(preparedClaimProof, { base, candidate, ablation });
+        generatedReceipt = generated.receipt;
+        generatedReasons = generated.reasons;
+      }
+    }
     const deterministicVerdict =
       evaluation.verdict === "BLOCK" || evaluation.verdict === "UNSUPPORTED"
         ? evaluation.verdict
@@ -567,18 +697,32 @@ export class VerificationEngine {
           ? mismatchReasons
           : evaluation.reasons;
 
+    const claimProofDecision = generatedReceipt?.judgment.decision;
+    if (generatedReceipt && claimProofDecision !== "MERGE") {
+      generatedReasons.push({
+        code: claimProofDecision === "REPAIR" ? "CHECK_FAILED" : "INCOMPLETE_PROOF",
+        subject: "claim-to-proof",
+        detail: `Generated claim-to-proof judgment: ${claimProofDecision}.`,
+      });
+    }
     const verdict =
       deterministicVerdict === "BLOCK" || deterministicVerdict === "UNSUPPORTED"
         ? deterministicVerdict
+        : preparedClaimProof && (!generatedReceipt || claimProofDecision === "BLOCK")
+          ? "BLOCK"
+          : claimProofDecision === "REPAIR" || claimProofDecision === "SPLIT"
+            ? "REVIEW"
         : planReasons.length > 0
           ? "REVIEW"
           : deterministicVerdict;
     const reasons =
       deterministicVerdict === "BLOCK" || deterministicVerdict === "UNSUPPORTED"
-        ? [...deterministicReasons, ...planReasons]
+        ? [...deterministicReasons, ...planReasons, ...generatedReasons]
+        : preparedClaimProof && (!generatedReceipt || claimProofDecision !== "MERGE")
+          ? [...deterministicReasons, ...planReasons, ...generatedReasons]
         : planReasons.length > 0
-          ? [...deterministicReasons, ...planReasons]
-          : deterministicReasons;
+          ? [...deterministicReasons, ...planReasons, ...generatedReasons]
+          : [...deterministicReasons, ...generatedReasons];
     const runKey = revisionRunKey(revision);
 
     return sealReceipt({
@@ -589,6 +733,7 @@ export class VerificationEngine {
       issueToProof: receiptIssueToProof,
       base,
       candidate,
+      ...(generatedReceipt ? { claimProof: generatedReceipt } : {}),
       pairedChecks: pairedChecks.checks,
       pairedMetrics: pairedMetrics.metrics,
       agentAnalysis,

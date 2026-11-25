@@ -11,6 +11,8 @@ import {
   type EvidenceHarnessFactory,
   type HarnessRequest,
 } from "./harness.js";
+import { proofPlanDigest } from "./proof-plan.js";
+import { parseTrustedReplayProfile, trustedReplayProfileDigest } from "./replay-profile.js";
 
 export interface E2BTrustedHarnessConfig {
   /** Production runtime supplies an immutable `<template>:<build-id>` selector. */
@@ -86,6 +88,37 @@ function isHarnessResult(value: unknown): value is Omit<HarnessResult, "phase" |
     "cpu_ms",
     "error_rate",
   ]);
+  const generatedProofValid = candidate.generatedProof === undefined || (
+    !!candidate.generatedProof &&
+    typeof candidate.generatedProof === "object" &&
+    /^[a-f0-9]{64}$/.test((candidate.generatedProof as { proofPlanDigest?: unknown }).proofPlanDigest as string) &&
+    Array.isArray((candidate.generatedProof as { experiments?: unknown }).experiments) &&
+    (candidate.generatedProof as { experiments: unknown[] }).experiments.length <= 64 &&
+    new Set(
+      (candidate.generatedProof as { experiments: Array<{ id?: unknown }> }).experiments
+        .map(({ id }) => id),
+    ).size === (candidate.generatedProof as { experiments: unknown[] }).experiments.length &&
+    (candidate.generatedProof as { experiments: unknown[] }).experiments.every((entry) => {
+      if (!entry || typeof entry !== "object") return false;
+      const observation = entry as Record<string, unknown>;
+      return (
+        typeof observation.id === "string" &&
+        /^[a-z][a-z0-9_-]{0,159}$/.test(observation.id) &&
+        ["primary", "positive_control", "negative_control"].includes(observation.kind as string) &&
+        ["pass", "fail", "unsupported"].includes(observation.observed as string) &&
+        Number.isSafeInteger(observation.assertions) &&
+        (observation.assertions as number) >= 0 &&
+        (observation.assertions as number) <= 24 &&
+        Array.isArray(observation.failedAssertionIds) &&
+        observation.failedAssertionIds.length <= 24 &&
+        observation.failedAssertionIds.every(
+          (id) => typeof id === "string" && /^[a-z][a-z0-9_-]{0,79}$/.test(id),
+        ) &&
+        typeof observation.artifactDigest === "string" &&
+        /^[a-f0-9]{64}$/.test(observation.artifactDigest)
+      );
+    })
+  );
   return (
     candidate.checks.every(
       (check) =>
@@ -107,7 +140,7 @@ function isHarnessResult(value: unknown): value is Omit<HarnessResult, "phase" |
           (typeof (metric as { value?: unknown }).value === "number" &&
             Number.isFinite((metric as { value: number }).value))) &&
         typeof (metric as { detail?: unknown }).detail === "string",
-    )
+    ) && generatedProofValid
   );
 }
 
@@ -178,7 +211,53 @@ export class E2BEvidenceHarness implements EvidenceHarness {
             "/workspace/mergeproof-advisory-plan.json": JSON.stringify(request.advisoryPlan),
           }
         : workspaceFiles;
-      for (const [path, content] of Object.entries(controllerFiles)) {
+      const generatedProofInputs = [
+        request.proofPlan,
+        request.proofPlanDigest,
+        request.replayProfile,
+        request.ablationDiff,
+      ];
+      if (generatedProofInputs.some((value) => value !== undefined) && generatedProofInputs.some((value) => value === undefined)) {
+        throw new HarnessUnavailableError(
+          "Generated proof plans, their digest, trusted replay profiles, and ablation diff must be mounted together.",
+        );
+      }
+      const generatedProofFiles: Record<string, string | Uint8Array> = request.proofPlan && request.proofPlanDigest && request.replayProfile && request.ablationDiff
+        ? (() => {
+            const replayProfile = parseTrustedReplayProfile(request.replayProfile);
+            if (request.proofPlan.status !== "ready") {
+              throw new HarnessUnavailableError("Only a ready generated proof plan can execute.");
+            }
+            const digestPattern = /^[a-f0-9]{64}$/;
+            const generatedPlanDigest = proofPlanDigest(request.proofPlan);
+            const planRevision = request.proofPlan.revision;
+            if (
+              generatedPlanDigest !== request.proofPlanDigest ||
+              !digestPattern.test(request.proofPlanDigest) ||
+              !Object.values(request.proofPlan.inputs).every((value) => digestPattern.test(value)) ||
+              planRevision.repository !== request.revision.repository ||
+              planRevision.pullRequest !== request.revision.pullRequest ||
+              planRevision.baseSha !== request.revision.baseSha ||
+              planRevision.headSha !== request.revision.headSha ||
+              request.proofPlan.inputs.replayProfileDigest !== trustedReplayProfileDigest(replayProfile)
+            ) {
+              throw new HarnessUnavailableError("Generated proof plan identity is malformed.");
+            }
+            if (Buffer.byteLength(request.ablationDiff, "utf8") > 1_048_576) {
+              throw new HarnessUnavailableError("Generated proof ablation diff exceeds the trusted limit.");
+            }
+            return {
+              "/workspace/mergeproof-proof-plan.json": JSON.stringify(request.proofPlan),
+              "/workspace/mergeproof-replay-profile.json": JSON.stringify(replayProfile),
+              "/workspace/mergeproof-pr.diff": request.ablationDiff,
+            };
+          })()
+        : {};
+      const mountedFiles: Record<string, string | Uint8Array> = {
+        ...controllerFiles,
+        ...generatedProofFiles,
+      };
+      for (const [path, content] of Object.entries(mountedFiles)) {
         if (!path.startsWith("/workspace/")) {
           throw new HarnessUnavailableError(
             `Workspace file must stay below /workspace: ${path}`,
@@ -205,6 +284,14 @@ export class E2BEvidenceHarness implements EvidenceHarness {
           MERGEPROOF_SOURCE_ARCHIVE: "/workspace/source.tar.gz",
           ...(request.advisoryPlan
             ? { MERGEPROOF_ADVISORY_PLAN_PATH: "/workspace/mergeproof-advisory-plan.json" }
+            : {}),
+          ...(request.proofPlan
+            ? {
+                MERGEPROOF_PROOF_PLAN_PATH: "/workspace/mergeproof-proof-plan.json",
+                MERGEPROOF_PROOF_PLAN_DIGEST: request.proofPlanDigest!,
+                MERGEPROOF_REPLAY_PROFILE_PATH: "/workspace/mergeproof-replay-profile.json",
+                MERGEPROOF_PR_DIFF_PATH: "/workspace/mergeproof-pr.diff",
+              }
             : {}),
         },
       });

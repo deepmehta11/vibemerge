@@ -41,10 +41,17 @@ function safeSummaryNote(value: string): string {
 }
 
 function summary(receipt: EvidenceReceipt): string {
+  const claimProof = receipt.claimProof;
+  const causalSummary = claimProof
+    ? `Claim-to-proof ${claimProof.judgment.decision}; base → PR candidate → fix removed; plan ${claimProof.proofPlanDigest.slice(0, 16)}.`
+    : "";
   if (receipt.reasons.length === 0) {
-    return `Sealed receipt ${receipt.integrityHash.slice(0, 16)} observed no policy failures.`;
+    return [
+      `Sealed receipt ${receipt.integrityHash.slice(0, 16)} observed no policy failures.`,
+      causalSummary,
+    ].filter(Boolean).join("\n");
   }
-  return receipt.reasons
+  return [causalSummary, receipt.reasons
     .slice(0, 10)
     .map((reason) => {
       // Harness command output can be controlled by the candidate source. It
@@ -52,7 +59,7 @@ function summary(receipt: EvidenceReceipt): string {
       const trustedDetail = reason.detail.split("Command outcome:")[0]?.trim();
       return `- [${reason.code}] ${reason.subject}${trustedDetail ? `: ${trustedDetail.slice(0, 300)}` : ""}`;
     })
-    .join("\n");
+    .join("\n")].filter(Boolean).join("\n");
 }
 
 type CheckRunResponse = { id?: unknown };
@@ -112,7 +119,16 @@ export class GitHubCheckRunGateway implements CheckRunGateway {
         output: {
           title: `MergeProof: ${input.receipt.verdict}`,
           summary: [evidenceSummary, note ? `Live merge policy: ${note}` : ""].filter(Boolean).join("\n\n"),
-          text: `Receipt: ${input.receipt.integrityHash}\nPolicy: ${input.receipt.policy.version}`,
+          text: [
+            `Receipt: ${input.receipt.integrityHash}`,
+            `Policy: ${input.receipt.policy.version}`,
+            ...(input.receipt.claimProof
+              ? [
+                  `Claim-to-proof plan: ${input.receipt.claimProof.proofPlanDigest}`,
+                  `Evidence identity: ${input.receipt.claimProof.evidenceIdentity}`,
+                ]
+              : []),
+          ].join("\n"),
         },
       }),
     });

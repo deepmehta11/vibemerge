@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { revisionRunKey, verifyReceipt } from "./crypto.js";
+
 import type {
   EvidenceReceipt,
   LivePullRequest,
@@ -48,6 +50,13 @@ export function preflight(
   live: LivePullRequest,
   requiredEvidenceCheck?: { name: string; appId: number },
 ): string | null {
+  if (
+    !verifyReceipt(receipt) ||
+    receipt.runKey !== revisionRunKey(revision) ||
+    revisionRunKey(receipt.revision) !== receipt.runKey
+  ) {
+    return "Evidence receipt identity or integrity does not match the pinned revision.";
+  }
   if (receipt.verdict !== "LOW_OBSERVED_RISK") {
     return `Verification verdict ${receipt.verdict} is not eligible for automatic merging.`;
   }
